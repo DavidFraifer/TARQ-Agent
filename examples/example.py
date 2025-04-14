@@ -1,4 +1,4 @@
-from hlr import Node, Agent
+from hlr_agent import Node, Agent
 
 def func_input(agent):
     print("AGENT IN INPUT NODE")

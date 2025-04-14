@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='hlr',
+    name='hlr_agent',
     version='0.1.0',
     description='HLR - Hierarchical LLM Routing',
     author='David Serrano Díaz',
