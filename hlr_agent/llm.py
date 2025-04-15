@@ -1,7 +1,8 @@
-import openai
+from openai import OpenAI
 from json import loads, JSONDecodeError
 from google import genai
 from google.genai import types
+
 def get_next_node(
     children_ids: list[str],
     children_descriptions: list[str],
@@ -15,7 +16,8 @@ def get_next_node(
     """
 
     if model == "gpt-4o":
-        openai.api_key = api_key
+        client = OpenAI(api_key=api_key)
+
         # Incorporate extra_context into system_message
         system_message = (
             "SYSTEM_MESSAGE:\n"
@@ -28,14 +30,12 @@ def get_next_node(
         user_nodes = "\n".join(
             f"{node_id}: {desc}" for node_id, desc in zip(children_ids, children_descriptions)
         )
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
+        response = client.chat.completions.create(
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": user_nodes},
             ],
-            max_tokens=10,
-            temperature=0,
         )
         return response.choices[0].message.content.strip().split()[0]
 

@@ -10,6 +10,9 @@ class Node:
         func: Optional[Callable[['Agent'], Optional[str]]] = None,
         description: Optional[str] = None
     ):
+        if not node_id or not node_id.strip():
+            raise ValueError("The 'node_id' field is required and cannot be empty.")
+            
         self.id = node_id
         self.children = children or []
         self.func = func
