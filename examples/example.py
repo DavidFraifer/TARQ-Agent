@@ -36,7 +36,7 @@ agent = Agent(
     nodes=nodes,    
     start_node_id="Input",
     end_node_id="Output",
-    model="gpt-4o",
+    model="gemini-2.0-flash",
     api_key="",
     user_message=user_message
 )
