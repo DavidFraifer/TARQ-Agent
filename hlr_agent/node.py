@@ -1,6 +1,6 @@
 from typing import Callable, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
-    from .agent import Agent  # solo se importa para comprobación de tipos
+    from .agent import Agent 
 
 class Node:
     def __init__(
@@ -11,9 +11,9 @@ class Node:
         description: Optional[str] = None
     ):
         self.id = node_id
-        self.children = children or []  # Si children es None, se asigna una lista vacía
+        self.children = children or []
         self.func = func
-        self.description = description  # Puede ser None
+        self.description = description 
 
     def execute(self, agent: 'Agent') -> Optional[str]:
         if self.func is None:

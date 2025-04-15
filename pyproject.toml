@@ -3,8 +3,8 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "HLR"
-version = "0.1.0"
+name = "hlr_agent"
+version = "0.1.2"
 description = "A library for managing nodes and agent workflows"
 authors = [
     { name = "David Serrano", email = "davidsd.2704@gmail.com" }

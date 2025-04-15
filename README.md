@@ -16,4 +16,4 @@
 You can install the **HLR** library from PyPI using the following command:
 
 ```bash
-pip install hlr
+pip install hlr_agent
