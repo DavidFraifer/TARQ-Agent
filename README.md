@@ -9,7 +9,7 @@ This makes it ideal for applications requiring sequential task processing with d
 - **Hierarchical Flow:** Organize your workflow into nodes that can branch out or converge based on custom logic.
 - **Dynamic Routing:** Each node can either explicitly determine the next node by returning an ID, or let an LLM decide the next step based on node descriptions.
 - **Shared Context:** Data (e.g., logs or variable values) is maintained in a common context object that nodes can read or update.
-- **LLM Integration:** Easily integrate with language models like Google’s Geminai (gemini-2.0-flash) or OpenAI’s GPT-4 (currently not available yet) for decision making.
+- **LLM Integration:** Easily integrate with language models like Google’s Gemini (gemini-2.0-flash) or OpenAI’s gpt-4o  for decision making.
 - **Input Validation:** The library ensures that all required fields are provided and unique node IDs are enforced.
 
 ## Installation
@@ -90,8 +90,6 @@ agent = Agent(
 agent.run()
 ```
 
-> **Warning:**  
-> If using `gpt-4o` as the model, the agent will raise an error since GPT-4o is currently not available.
 
 ## How It Works
 
