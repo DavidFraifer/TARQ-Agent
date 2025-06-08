@@ -1,5 +1,5 @@
 from hlr_agent import Node, Agent
-
+import time
 
 def func_database(agent):
     print("Querying database...")
@@ -48,9 +48,12 @@ agent = Agent(
 )
 
 
+start_time = time.time()
 agent.run(
     """
     Query in the database the users registered 
     last week and send them to each email offering a 10$ discount..
     """
 )
+end_time = time.time()
+print(f"Time spent in agent.run: {end_time - start_time:.2f} seconds")

@@ -31,8 +31,8 @@ class Agent:
             raise ValueError(f"The start node '{start_node_id}' does not exist.")
         if end_node_id not in self.nodes:
             raise ValueError(f"The end node '{end_node_id}' does not exist.")
-        if model not in ["gemini-2.0-flash", "gpt-4o"]:
-            raise ValueError(f"Model '{model}' is not allowed. Use 'gemini-2.0-flash' or 'gpt-4o'.")
+        if model not in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gpt-4o"]:
+            raise ValueError(f"Model '{model}' is not allowed. Use 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b' or 'gpt-4o'.")
 
         self.model = model
         self.current_id: Optional[str] = start_node_id

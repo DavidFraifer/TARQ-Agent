@@ -14,7 +14,7 @@ license = { file = "LICENSE" }
 requires-python = ">=3.8"
 dependencies = [
     "openai",
-    "google-genai",
+    "google-genai"
 ]
 
 [project.urls]
