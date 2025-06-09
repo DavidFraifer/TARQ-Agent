@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hlr_agent"
-version = "0.2.2"
+version = "0.3.0"
 description = "A library for managing nodes and agent workflows"
 authors = [
     { name = "David Serrano", email = "davidsd.2704@gmail.com" }

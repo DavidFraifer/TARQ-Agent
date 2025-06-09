@@ -43,7 +43,7 @@ agent = Agent(
     nodes=nodes,
     start_node_id="Input",
     end_node_id="Output",
-    model="gemini-1.5-flash-8b",
+    model="gemini-1.5-flash-8b",  # Updated to use one of the new models
     api_key=""
 )
 

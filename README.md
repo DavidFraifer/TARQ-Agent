@@ -11,14 +11,16 @@ Each node represents a distinct step or action in your process. It can execute c
 
 -   **Node-Based Workflows:** Structure complex processes into manageable, reusable nodes.
 -   **Hierarchical Flow:** Design workflows where nodes can branch and converge based on logic or LLM decisions.
+-   **Non-Linear Dependencies:** Support for circular dependencies between nodes for complex workflows.
 -   **Dynamic Routing:**
     -   Nodes can explicitly return the ID of the next node.
-    -   Alternatively, let an integrated LLM (like Gemini) choose the next node based on descriptions and the current context.
+    -   Alternatively, let an integrated LLM choose the next node based on descriptions and the current context.
 -   **Shared Context:** Maintain state across nodes using a simple dictionary (`agent.context`). Nodes can read and write data (like logs, intermediate results, or the execution path).
     -   `agent.context["info"]`: Commonly used for accumulating logs or data.
     -   `agent.context["route"]`: Automatically tracks the sequence of nodes visited.
--   **LLM Integration:** Seamlessly uses Google's Gemini (`gemini-2.0-flash`) and OpenAI (`gpt-4o`) for routing decisions, passing relevant context (route history, accumulated info, user request). 
--   **Robust Validation:** Ensures required parameters are provided during initialization (nodes, start/end IDs, model, API key) and runtime (`user_message`), preventing common errors. Checks for unique node IDs.
+-   **LLM Integration:** Seamlessly uses Google's Gemini models (`gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-1.5-flash-8b`) and OpenAI (`gpt-4o`) for routing decisions.
+-   **Flexible Message Handling:** Pass user messages at runtime through the `run()` method for dynamic execution.
+-   **Robust Validation:** Ensures required parameters are provided during initialization and runtime, preventing common errors.
 
 ## Installation
 
@@ -79,7 +81,7 @@ def func_output(agent):
 
 ### 2. Configure Nodes
 
-Define the structure of your workflow using `Node` objects.
+Define the structure of your workflow using `Node` objects. Nodes can have circular dependencies for complex workflows:
 
 ```python
 # example.py (continued)
@@ -95,7 +97,7 @@ nodes = [
 
 ### 3. Initialize and Run the Agent
 
-Create an `Agent` instance and execute the workflow using `agent.run()`, providing the user's request at runtime.
+Create an `Agent` instance and execute the workflow using `agent.run()`. The user message is now passed directly to the `run()` method:
 
 ```python
 # example.py (continued)
@@ -105,7 +107,7 @@ agent = Agent(
     nodes=nodes,
     start_node_id="Input",
     end_node_id="Output",
-    model="gemini-2.0-flash", # Specify the LLM model
+    model="gemini-1.5-flash-8b", # Available models: gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-flash-8b, gpt-4o
     api_key="YOUR_GEMINI_API_KEY" # Replace with your actual API key
 )
 
@@ -114,7 +116,7 @@ user_request = "Please get the emails from the database and send them a welcome 
 
 print("--- Starting Agent Run ---")
 try:
-    agent.run(user_message=user_request)
+    agent.run(user_message=user_request)  # Message is passed here, not in init
 except ValueError as e:
     print(f"Agent Error: {e}")
 print("\n--- Agent Run Finished ---")
@@ -147,6 +149,13 @@ print("\n--- Agent Run Finished ---")
         *   Sets the `current_id` to the `next_node_id` for the next iteration.
 
 3.  **Termination:** The loop ends when `current_id` becomes `None` (either explicitly set by a node, reaching a node with no children, or encountering an error like an invalid explicit return). The `func_output` (or the function of the last node) typically handles final reporting.
+
+## What's New in v0.3.0
+
+-   **Runtime Message Passing:** User messages are now passed to `agent.run(user_message="...")` instead of during agent initialization, allowing for more flexible and dynamic execution.
+-   **Additional Gemini Models:** Added support for `gemini-1.5-flash` and `gemini-1.5-flash-8b` alongside the existing `gemini-2.0-flash` and `gpt-4o`.
+-   **Enhanced Non-Linear Workflows:** Improved support for circular dependencies between nodes, enabling more complex workflow patterns where nodes can reference each other in cycles.
+-   **Better Circular Dependency Handling:** The routing system now better handles cases where nodes have bidirectional relationships for sophisticated task management.
 
 ## Contributing
 
