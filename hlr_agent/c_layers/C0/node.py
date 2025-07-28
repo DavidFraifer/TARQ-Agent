@@ -1,13 +1,13 @@
 from typing import Callable, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
-    from .agent import Agent 
+    from .graph import Graph 
 
 class Node:
     def __init__(
         self,
         node_id: str,
         children: Optional[List[str]],
-        func: Optional[Callable[['Agent'], Optional[str]]] = None,
+        func: Optional[Callable[['Graph'], Optional[str]]] = None,
         description: Optional[str] = None
     ):
         if not node_id or not node_id.strip():
@@ -18,7 +18,7 @@ class Node:
         self.func = func
         self.description = description 
 
-    def execute(self, agent: 'Agent') -> Optional[str]:
+    def execute(self, graph: 'Graph') -> Optional[str]:
         if self.func is None:
             return None
-        return self.func(agent)
+        return self.func(graph)

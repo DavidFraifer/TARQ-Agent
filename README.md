@@ -18,7 +18,7 @@ Each node represents a distinct step or action in your process. It can execute c
 -   **Shared Context:** Maintain state across nodes using a simple dictionary (`agent.context`). Nodes can read and write data (like logs, intermediate results, or the execution path).
     -   `agent.context["info"]`: Commonly used for accumulating logs or data.
     -   `agent.context["route"]`: Automatically tracks the sequence of nodes visited.
--   **LLM Integration:** Seamlessly uses Google's Gemini models (`gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-1.5-flash-8b`) and OpenAI (`gpt-4o`) for routing decisions.
+-   **LLM Integration:** Seamlessly uses Google's Gemini models (`gemini-2.0-flash`, `gemini-2.5-flash-lite`, `gemini-1.5-flash`, `gemini-1.5-flash-8b`) and OpenAI (`gpt-4o`) for routing decisions.
 -   **Flexible Message Handling:** Pass user messages at runtime through the `run()` method for dynamic execution.
 -   **Robust Validation:** Ensures required parameters are provided during initialization and runtime, preventing common errors.
 
@@ -31,6 +31,26 @@ pip install hlr-agent
 ```
 
 *(Note: PyPI normalizes names, so `pip install hlr_agent` also works).*
+
+## Configuration
+
+HLR automatically loads API keys from environment variables. Create a `.env` file in your project root or execution directory:
+
+```bash
+# .env file
+GOOGLE_API_KEY=your_google_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+BRAVE_API_KEY=your_brave_api_key_here
+```
+
+### Supported API Key Formats
+
+The system automatically detects API keys in multiple formats:
+- **Google/Gemini**: `GOOGLE_API_KEY`, `GOOGLE_AI_API_KEY`, `GEMINI_API_KEY`
+- **OpenAI**: `OPENAI_API_KEY`
+- **Brave Search**: `BRAVE_API_KEY`
+
+Copy the provided `.env.example` file and add your actual API keys. No need to pass API keys manually in your code!
 
 ## Usage Example
 
@@ -103,23 +123,22 @@ Create an `Agent` instance and execute the workflow using `agent.run()`. The use
 # example.py (continued)
 
 # --- Agent Initialization ---
-agent = Agent(
+graph = Graph(
     nodes=nodes,
     start_node_id="Input",
     end_node_id="Output",
-    model="gemini-1.5-flash-8b", # Available models: gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-flash-8b, gpt-4o
-    api_key="YOUR_GEMINI_API_KEY" # Replace with your actual API key
+    model="gemini-1.5-flash-8b"  # API key automatically loaded from .env
 )
 
 # --- Run the Agent ---
 user_request = "Please get the emails from the database and send them a welcome message."
 
-print("--- Starting Agent Run ---")
+print("--- Starting Graph Run ---")
 try:
-    agent.run(user_message=user_request)  # Message is passed here, not in init
+    graph.run(user_message=user_request)  # API key automatically loaded
 except ValueError as e:
-    print(f"Agent Error: {e}")
-print("\n--- Agent Run Finished ---")
+    print(f"Graph Error: {e}")
+print("\n--- Graph Run Finished ---")
 
 ```
 
