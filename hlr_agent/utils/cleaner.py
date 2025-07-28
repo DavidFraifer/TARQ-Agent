@@ -9,22 +9,10 @@ from difflib import SequenceMatcher
 
 
 def similarity(a: str, b: str) -> float:
-    """Calculate similarity between two strings using SequenceMatcher."""
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
 def clean_tool_name(tool_name: str, available_tools: List[str], similarity_threshold: float = 0.6) -> Optional[str]:
-    """
-    Clean and match tool names using regex patterns and similarity matching.
-    
-    Args:
-        tool_name: The potentially malformed tool name from LLM
-        available_tools: List of valid tool names
-        similarity_threshold: Minimum similarity score to consider a match (0.0-1.0)
-    
-    Returns:
-        str: The closest matching tool name, or None if no good match found
-    """
     if not tool_name or not available_tools:
         return None
     
@@ -170,26 +158,3 @@ def regex_similarity(name1: str, name2: str) -> float:
     return 0.0
 
 
-# Example usage and testing
-if __name__ == "__main__":
-    # Test cases
-    available_tools = ['jira', 'gmail', 'sheets', 'drive', 'calendar', 'slack']
-    
-    test_cases = [
-        "gmail:",
-        "jira-ticket",
-        "google-sheets",
-        "email-tool",
-        "slack_message",
-        "drive_api",
-        "calendar_service",
-        "unknown_tool",
-        "random_string"
-    ]
-    
-    print("Tool Name Cleaner Test Results:")
-    print("=" * 50)
-    
-    for test_case in test_cases:
-        result = clean_tool_name(test_case, available_tools)
-        print(f"'{test_case}' -> '{result}'")

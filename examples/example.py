@@ -17,7 +17,7 @@ agent = Agent(
 
 # Start agent, submit task, wait, and stop
 agent.start()
-agent.run("Check my gmail inbox and look for an email from john.doe@example.com then create a Jira ticket with the email subject, repeating the process every hour until you see an email from john.doe@example.com")
+agent.run("Check my gmail inbox and look for an email from john.doe@example.com then create a Jira ticket with the email subject.")
 
 time.sleep(15)
 

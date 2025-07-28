@@ -21,6 +21,3 @@ class TaskMemory:
     
     def get_line_count(self) -> int:
         return len(self._lines)
-    
-    def is_full(self) -> bool:
-        return len(self._lines) >= self.max_lines

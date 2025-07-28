@@ -1,5 +1,3 @@
-"""Simple task logger for HLR Agent"""
-
 import json
 import time
 from datetime import datetime
@@ -7,14 +5,12 @@ from pathlib import Path
 from typing import Dict, Any
 
 class TaskLogger:
-    """Simple logger for tracking task execution metrics."""
     
     def __init__(self, log_file: str = "hlr_tasks.log"):
         self.log_file = Path(log_file)
         self.active_tasks: Dict[str, Dict[str, Any]] = {}
         
     def start_task(self, task_id: str, message: str, is_periodic: bool = False, frequency_seconds: int = 0, has_completion_condition: bool = False):
-        """Start tracking a new task."""
         self.active_tasks[task_id] = {
             "task_id": task_id,
             "message": message[:100] + "..." if len(message) > 100 else message,
@@ -29,17 +25,14 @@ class TaskLogger:
         }
     
     def increment_iteration(self, task_id: str):
-        """Increment iteration count for a task."""
         if task_id in self.active_tasks:
             self.active_tasks[task_id]["iterations"] += 1
     
     def add_tokens(self, task_id: str, tokens: int):
-        """Add token count for a task."""
         if task_id in self.active_tasks:
             self.active_tasks[task_id]["tokens_used"] += tokens
     
     def complete_task(self, task_id: str, status: str = "completed"):
-        """Mark a task as completed and log it."""
         if task_id not in self.active_tasks:
             return
         
@@ -55,13 +48,9 @@ class TaskLogger:
         # Remove from active tasks
         del self.active_tasks[task_id]
         
-        # Print summary
-        self._print_task_summary(task_data)
-    
+
     def _write_log_entry(self, task_data: Dict[str, Any]):
-        """Write a single log entry to the file."""
         try:
-            # Create log entry without internal timestamps
             log_entry = {
                 "task_id": task_data["task_id"],
                 "message": task_data["message"],
@@ -76,18 +65,13 @@ class TaskLogger:
                 "has_completion_condition": task_data.get("has_completion_condition", False)
             }
             
-            # Append to log file
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry) + "\n")
                 
         except Exception as e:
             print(f"⚠️ [Logger] Failed to write log entry: {e}")
     
-    def _print_task_summary(self, task_data: Dict[str, Any]):
-        """Print a concise task summary (disabled for cleaner output)."""
-        pass    
     def get_log_stats(self) -> Dict[str, Any]:
-        """Get comprehensive statistics from the log file."""
         if not self.log_file.exists():
             return {"total_tasks": 0, "total_tokens": 0, "total_iterations": 0, "log_file": str(self.log_file)}
         

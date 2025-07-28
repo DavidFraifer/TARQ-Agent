@@ -10,7 +10,6 @@ class Agent:
     def __init__(self, tools: List[Union[str, Tool]], light_llm: str, heavy_llm: str, enable_logging: bool = False):
         configure_api_keys()
         
-        # Validate models
         for model, name in [(light_llm, "light_llm"), (heavy_llm, "heavy_llm")]:
             if model not in self.SUPPORTED_MODELS:
                 raise ValueError(f"Unsupported {name}: {model}. Supported: {self.SUPPORTED_MODELS}")
@@ -24,7 +23,6 @@ class Agent:
         self.c1 = C1(self.graph)
         self.running = False
         
-        # Pass logger to C1 if enabled
         if self.logger:
             self.c1.set_logger(self.logger)
         
@@ -49,32 +47,6 @@ class Agent:
         return [tool.name if isinstance(tool, Tool) else tool for tool in self.tools]
     
     def get_log_stats(self) -> dict:
-        """Get logging statistics if logging is enabled."""
         if self.logger:
             return self.logger.get_log_stats()
         return {"logging": "disabled"}
-    
-    def enable_task_logging(self, log_file: str = "hlr_tasks.log"):
-        """Enable task logging with optional custom log file."""
-        if not self.enable_logging:
-            self.enable_logging = True
-            self.logger = TaskLogger(log_file)
-            if self.c1:
-                self.c1.set_logger(self.logger)
-            print(f"📊 [Agent] Logging enabled: {log_file}")
-    
-    def disable_task_logging(self):
-        """Disable task logging."""
-        if self.enable_logging:
-            self.enable_logging = False
-            if self.c1:
-                self.c1.set_logger(None)
-            self.logger = None
-            print("📊 [Agent] Logging disabled")
-        
-    def __enter__(self):
-        self.start()
-        return self
-        
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()

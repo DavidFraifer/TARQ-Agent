@@ -12,13 +12,11 @@ class C1:
         self.scheduler_thread = None
         self.running = False
         self.base_graph = base_graph
-        self.logger = None  # Will be set by Agent if logging is enabled
+        self.logger = None
         
-        # Initialize agent memory
         self.agent_memory = AgentMemory(f"C1-Agent-{id(self)}", max_tasks=50)
     
     def set_logger(self, logger):
-        """Set the task logger."""
         self.logger = logger
     
     def start(self):
@@ -58,7 +56,7 @@ class C1:
                     self.message_queue.task_done()
                     
                 except queue.Empty:
-                    await asyncio.sleep(0.1)  # Reduced from 10ms to 100ms polling
+                    await asyncio.sleep(0.1)
                     continue
                 except Exception as e:
                     print(f"❌ Scheduler queue error: {e}")
@@ -79,14 +77,11 @@ class C1:
         import time
         from datetime import datetime
         
-        # Use high-resolution timestamp for efficient task ID
         start_time = time.time()
-        task_id = f"{int(start_time * 1000) % 100000000:08d}"  # 8-digit ID from timestamp
+        task_id = f"{int(start_time * 1000) % 100000000:08d}" 
         
-        # Create task memory through agent memory
         task_memory = self.agent_memory.create_task_memory(f"Task-{task_id}")
         
-        # Log task creation in agent memory summary
         print(f"[C1] Created task memory for {task_id}. Current Tasks: {self.agent_memory.get_task_count()}, Message: {message[:40]}...")
         
         try:
@@ -96,26 +91,21 @@ class C1:
             print(f"🔄 [C1] Fallback: Using original graph with no frequency")
             filtered_graph, frequency, analysis_tokens, has_completion_condition = self.base_graph, 0, 0, False
         
-        # Start logging after we have task analysis info
         if self.logger:
             is_periodic = frequency > 0
             self.logger.start_task(task_id, message, is_periodic, frequency, has_completion_condition)
             
-        # Track analysis tokens
         if self.logger and analysis_tokens:
             self.logger.add_tokens(task_id, analysis_tokens)
         
         try:
-            # Use shallow copy for better performance - graph state is isolated per task anyway
             task_graph = filtered_graph
-            task_graph.reset()  # Reset state instead of deep copying
+            task_graph.reset()
             
             c0_instance = C0(task_graph)
             
-            # Pass logger to C0 if available
             if self.logger:
                 c0_instance.set_logger(self.logger, task_id)
-                # Also set logger on the graph
                 task_graph.set_logger(self.logger, task_id)
             
             await c0_instance.run_iteration(
@@ -125,10 +115,8 @@ class C1:
                 max_iterations=1 if frequency == 0 else -1
             )
             
-            # Calculate task duration using cached start time
             task_duration = time.time() - start_time
             
-            # Get tokens used if logger is available
             tokens_info = ""
             if self.logger and task_id in self.logger.active_tasks:
                 tokens_used = self.logger.active_tasks[task_id].get('tokens_used', 0)
@@ -137,7 +125,6 @@ class C1:
             print(f"[C1] Route: {task_graph.context.get('route', 'N/A')}")
             print(f"[C1] Task {task_id} completed successfully. Duration: {task_duration:.2f}s{tokens_info}")
             
-            # Complete logging if enabled
             if self.logger:
                 self.logger.complete_task(task_id, "completed")
             
@@ -145,15 +132,12 @@ class C1:
             error_time = datetime.fromtimestamp(time.time()).strftime('%H:%M:%S.%f')[:-3]
             print(f"❌ [Task-{task_id}] Error at {error_time}: {e}")
             
-            # Still keep the task memory for debugging
             task_memory.set(f"ERROR: {str(e)}")
             
-            # Log error if enabled
             if self.logger:
                 self.logger.complete_task(task_id, "error")
     
     async def llm_schedule_and_filter(self, user_query: str, base_graph: Graph):
-        """Comprehensive task analysis using LLM to determine tools, routing, and scheduling."""
         from ..internal.llm import llm_completion_async
         import json
         
@@ -185,12 +169,10 @@ Use exact tool names from list above."""
             
             task_analysis = json.loads(analysis_result)
             
-            # Extract analysis results
             frequency_minutes = task_analysis.get('frequency_minutes', 0)
             has_completion_condition = task_analysis.get('has_completion_condition', False)
             optimal_routing = task_analysis.get('optimal_routing', {})
             
-            # Derive required tools from routing efficiently
             required_tools = set()
             for node, children in optimal_routing.items():
                 if node not in ('Input', 'Output'):
@@ -200,19 +182,16 @@ Use exact tool names from list above."""
                                         if child not in ('Input', 'Output'))
             required_tools = list(required_tools)
             
-            # Determine if periodic based on frequency
             is_periodic = frequency_minutes > 0
             
             print(f"[C1] Task analysis: {'Periodic' if is_periodic else 'One-time'}, Tools: {required_tools}, Frequency: {frequency_minutes} minutes, Completion check: {has_completion_condition}")
             
-            # Create optimized graph based on LLM analysis
             optimized_graph = self._create_optimized_graph(
                 required_tools, optimal_routing, base_graph
             )
             
-            # Set completion condition based on LLM analysis
             optimized_graph._has_completion_condition = has_completion_condition
-            frequency = frequency_minutes * 60 if is_periodic else 0  # Convert minutes to seconds
+            frequency = frequency_minutes * 60 if is_periodic else 0
             return optimized_graph, frequency, tokens, has_completion_condition
             
         except Exception as e:
@@ -221,40 +200,31 @@ Use exact tool names from list above."""
             return base_graph, 0, 0, False
     
     def _create_optimized_graph(self, required_tools: list, optimal_routing: dict, base_graph: Graph):
-        """Create an optimized graph based on LLM analysis."""
         from .C0.node import Node
         from .C0.graph import Graph as OptimizedGraph
         
-        # Get available tools from base graph
         available_tools = [node_id for node_id in base_graph.nodes.keys() 
                           if node_id not in ['Input', 'Output']]
         
-        # Validate that required tools exist in base graph
         valid_tools = [tool for tool in required_tools if tool in base_graph.nodes]
         
         if not valid_tools:
             print(f"⚠️ [C1] No valid tools found, using all available tools")
             valid_tools = available_tools
         
-        # Create optimized nodes
         optimized_nodes = []
         
-        # Create Input node with LLM-optimized routing
         input_children = optimal_routing.get('Input', valid_tools + ['Output'])
-        # Only add Output if not already specified in routing
         if 'Output' not in input_children and len(input_children) == 0:
             input_children.append('Output')
         optimized_nodes.append(Node("Input", children=input_children))
         
-        # Create tool nodes with LLM-optimized connections
         for tool_name in valid_tools:
             if tool_name in base_graph.nodes:
                 original_node = base_graph.nodes[tool_name]
                 
-                # Use LLM-suggested routing or fallback to default
                 tool_children = optimal_routing.get(tool_name, ['Output'])
                 
-                # Only add Output if not already specified and no other children exist
                 if 'Output' not in tool_children and len(tool_children) == 0:
                     tool_children.append('Output')
                 
@@ -265,7 +235,6 @@ Use exact tool names from list above."""
                     description=original_node.description
                 ))
         
-        # Create Output node
         optimized_nodes.append(Node(
             node_id="Output",
             children=None,
@@ -273,7 +242,6 @@ Use exact tool names from list above."""
             description=base_graph.nodes["Output"].description
         ))
         
-        # Create optimized graph
         optimized_graph = OptimizedGraph(
             nodes=optimized_nodes,
             start_node_id="Input",
