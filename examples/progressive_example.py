@@ -14,8 +14,8 @@ def main():
     # Initialize agent with all available tools
     agent = Agent(
         tools=['jira', 'gmail', 'sheets', 'drive', 'calendar', 'slack'],
-        light_llm="gpt-4o-mini",
-        heavy_llm="gpt-4o-mini",
+        light_llm="gemini-2.5-flash",
+        heavy_llm="gemini-2.5-flash",
         enable_logging=True
     )
     

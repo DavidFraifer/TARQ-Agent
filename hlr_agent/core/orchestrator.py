@@ -81,6 +81,8 @@ class Orchestrator:
         task_id = f"{int(start_time * 1000) % 100000000:08d}"
         task_memory = self.agent_memory.create_task_memory(f"Task-{task_id}")
         
+        console.task(f"Task {task_id} ADDED", task_id=task_id)
+        
         if self.logger:
             self.logger.start_task(task_id, message)
         
@@ -121,8 +123,11 @@ class Orchestrator:
     
     async def handle_message(self, message: str, task_memory, task_id: str = "default") -> Dict[str, Any]:
         try:
-            # Step 1: Initial Analysis
+            # Step 1: Initial Analysis with timing
+            analysis_start = time.time()
             analysis = await self.llm_analyze_task(message, task_memory, task_id)
+            analysis_time = time.time() - analysis_start
+            console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
             
             frequency_minutes = analysis.get("frequency_minutes", 0)
             
@@ -137,10 +142,20 @@ class Orchestrator:
             while iteration <= max_iterations:
                 if iteration > 1:
                     console.info(f"Starting feedback iteration #{iteration}", task_id=task_id)
-                    # Re-analyze for feedback iterations
+                    # Re-analyze for feedback iterations with timing
+                    analysis_start = time.time()
                     analysis = await self.llm_analyze_task(current_message, task_memory, task_id)
+                    analysis_time = time.time() - analysis_start
+                    console.debug(f"Re-analysis completed (iter #{iteration})", f"Time: {analysis_time:.2f}s", task_id=task_id)
                 
-                tools_to_execute = analysis.get("action_tools", analysis.get("tools", []))
+                tools_to_execute = analysis.get("tools", [])
+                
+                # 🌟 BRILLIANT CONDITIONAL LOGIC 🌟
+                conditional_logic = analysis.get("conditional_logic", {})
+                if conditional_logic.get("enabled", False):
+                    console.info("Conditional execution detected", "Evaluating conditions", task_id=task_id)
+                    return await self._execute_conditional_logic(analysis, task_memory, task_id, message)
+                
                 if not tools_to_execute:
                     return {
                         "completed": True,
@@ -152,9 +167,12 @@ class Orchestrator:
                     console.info("Executing tools", f"Tools: {', '.join(tools_to_execute)}", task_id=task_id)
                 await self.execute_tools_sequentially(tools_to_execute, task_memory, f"{task_id}-iter{iteration}")
                 
-                # Step 3: Validation
+                # Step 3: Validation with timing
+                validation_start = time.time()
                 console.debug("Validating task completion", task_id=task_id)
                 validation = await self.llm_validate_completion(message, task_memory, task_id)
+                validation_time = time.time() - validation_start
+                console.debug("Task validation completed", f"Time: {validation_time:.2f}s", task_id=task_id)
                 
                 if validation.get("completed", False):
                     if iteration > 1:
@@ -175,28 +193,27 @@ class Orchestrator:
             return {"completed": True, "final_message": f"Task failed: {str(e)}"}
     
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
-        memory_content = task_memory.get() if task_memory else "No previous context"
+        # Limit memory context to save tokens
+        memory_content = task_memory.get() if task_memory else "No context"
+        if len(memory_content) > 200:  # Limit context length
+            memory_content = memory_content[-200:]  # Keep last 200 chars
         available_tools = list(self.tools.tools.keys())
         
         analysis_prompt = f"""Task: "{message}"
-Context: {memory_content}
-Tools: {available_tools}
+Context:{memory_content}
+Tools:{available_tools}
 
-JSON: {{"monitoring_tools": ["tool"], "action_tools": ["tool1","tool2"], "frequency_minutes": int, "partial_task": "description"}}
+OUTPUT ONLY valid JSON matching this schema:
+{{"tools":["tool1"...],"frequency_minutes":int,"conditional_logic":{{"enabled":true|false,"conditions":[{{"if":"<condition>","then":["tool1"...],"else":["toolB"...}}]}}}}
 
-Examples:
-- Send email → {{"monitoring_tools": [], "action_tools": ["gmail"], "frequency_minutes": 0, "partial_task": null}}
-- Check emails until admin arrives, then upload → {{"monitoring_tools": ["gmail"], "action_tools": ["sheets"], "frequency_minutes": 60, "partial_task": "Check gmail for admin"}}
-- Analyze emails and send summary → {{"monitoring_tools": [], "action_tools": ["gmail", "sheets", "gmail"], "frequency_minutes": 0, "partial_task": null}}
-
-Rules: Tools in order, can repeat. frequency=0 for one-time, >0 for repeating."""
-        
+Rules: first of "tools" gathers data; use "else" for natural if/else; return empty arrays if none; frequency:0 unless explicit interval; no extra fields or text.
+"""
         try:
             response, token_info = await llm_completion_async(
                 model=self.heavy_llm, 
                 prompt=analysis_prompt,
                 temperature=0.0,  # Maximum determinism
-                max_tokens=100,  
+                max_tokens=80,  # Reduced from 100 (conservative)  
                 response_format="json"
             )
             
@@ -207,7 +224,95 @@ Rules: Tools in order, can repeat. frequency=0 for one-time, >0 for repeating.""
             return result
             
         except Exception as e:
-            return {"monitoring_tools": [], "action_tools": [], "frequency_minutes": 0, "partial_task": None}
+            return {"tools": [], "frequency_minutes": 0, "conditional_logic": {"enabled": False, "conditions": []}}
+
+    async def _execute_conditional_logic(self, analysis: dict, task_memory, task_id: str, original_message: str) -> dict:
+        """🌟 NATURAL: Execute data gathering tool → Evaluate conditions with if-else logic"""
+        try:
+            # Step 1: Execute first tool to gather data (usually monitoring tool like gmail)
+            tools = analysis.get("tools", [])
+            if tools:
+                data_tool = tools[0]  # First tool is for gathering data
+                console.info("Gathering data for conditions", f"Tool: {data_tool}", task_id=task_id)
+                await self.execute_tools_sequentially([data_tool], task_memory, f"{task_id}-data")
+            
+            # Step 2: Get data for condition evaluation
+            monitoring_data = task_memory.get() if task_memory else ""
+            
+            # Step 3: Evaluate conditions with natural if-else logic
+            conditions = analysis.get("conditional_logic", {}).get("conditions", [])
+            
+            for condition in conditions:
+                condition_text = condition.get("if", "")
+                then_tools = condition.get("then", [])
+                else_tools = condition.get("else", [])
+                
+                # Evaluate condition and execute appropriate tools
+                condition_result, condition_time = await self._evaluate_single_condition(condition_text, monitoring_data, task_id)
+                if condition_result:
+                    # IF condition met
+                    console.info(f"✅ Condition met: {condition_text}", f"Executing: {', '.join(then_tools)} (Time: {condition_time:.2f}s)", task_id=task_id)
+                    await self.execute_tools_sequentially(then_tools, task_memory, f"{task_id}-then")
+                    execution_summary = f"IF executed: {condition_text} → {', '.join(then_tools)}"
+                else:
+                    # ELSE condition - execute else tools if provided
+                    if else_tools:
+                        console.info(f"❌ Condition not met: {condition_text}", f"Executing ELSE: {', '.join(else_tools)} (Time: {condition_time:.2f}s)", task_id=task_id)
+                        await self.execute_tools_sequentially(else_tools, task_memory, f"{task_id}-else")
+                        execution_summary = f"ELSE executed: NOT {condition_text} → {', '.join(else_tools)}"
+                    else:
+                        console.debug(f"❌ Condition not met: {condition_text}", f"No else clause (Time: {condition_time:.2f}s)", task_id=task_id)
+                        continue  # Try next condition
+                
+                # Validate completion after execution (common for both IF and ELSE) with timing
+                validation_start = time.time()
+                validation = await self.llm_validate_completion(original_message, task_memory, task_id)
+                validation_time = time.time() - validation_start
+                console.debug("Conditional validation completed", f"Time: {validation_time:.2f}s", task_id=task_id)
+                return {
+                    "completed": validation.get("completed", True),
+                    "final_message": validation.get("final_message", execution_summary)
+                }
+            
+            # No conditions executed
+            return {
+                "completed": True, 
+                "final_message": "No conditions or else clauses were executed"
+            }
+            
+        except Exception as e:
+            return {
+                "completed": True, 
+                "final_message": f"Conditional execution failed: {str(e)}"
+            }
+
+    async def _evaluate_single_condition(self, condition: str, data: str, task_id: str) -> tuple[bool, float]:
+        """Smart condition evaluation using lightweight LLM call - returns (result, timing)"""
+        prompt = f"""Data: {data}
+
+Check if this condition is met based on the data: {condition}
+Return JSON only.
+JSON: {{"met": true/false}}"""
+        
+        condition_start = time.time()
+        try:
+            response, _ = await llm_completion_async(
+                model=self.light_llm,
+                prompt=prompt,
+                temperature=0.0,
+                max_tokens=25,  # Increased to ensure complete JSON response
+                response_format="json"
+            )
+            
+            result = json.loads(self._clean_json_response(response))
+            is_met = result.get("met", False)
+            
+        except Exception as e:
+            is_met = False
+            
+        condition_time = time.time() - condition_start
+        return is_met, condition_time
+    
     
     async def execute_tools_sequentially(self, tools: List[str], task_memory, task_id: str):
         for tool_name in tools:
@@ -228,16 +333,19 @@ Rules: Tools in order, can repeat. frequency=0 for one-time, >0 for repeating.""
         return response_clean
     
     async def llm_validate_completion(self, original_message: str, task_memory, task_id: str):
-        memory_content = task_memory.get() if task_memory else "No memory available"
+        # Limit memory for validation to save tokens
+        memory_content = task_memory.get() if task_memory else "No results"
+        if len(memory_content) > 300:  # Limit results length
+            memory_content = memory_content[-300:]  # Keep last 300 chars
         
-        validation_prompt = f"""Request: {original_message}
+        validation_prompt = f"""Task: {original_message}
 Results: {memory_content}
 
-JSON: {{"completed": true/false, "final_message": "what was accomplished", "continue_message": "next step if incomplete"}}"""
+JSON: {{"completed": true/false, "final_message": "summary", "continue_message": "next step"}}"""
         
         try:
             response, token_info = await llm_completion_async(
-                model=self.light_llm, prompt=validation_prompt, temperature=0.0, max_tokens=100, response_format="json"  # Increased tokens for more descriptive messages
+                model=self.light_llm, prompt=validation_prompt, temperature=0.0, max_tokens=80, response_format="json"  # Reduced from 100
             )
             
             if self.logger:
@@ -254,184 +362,68 @@ JSON: {{"completed": true/false, "final_message": "what was accomplished", "cont
             return {"completed": True, "final_message": "Task execution completed successfully", "continue_message": ""}
         
 
-    async def llm_validate_partial_task(self, partial_task: str, task_memory, task_id: str):
-        """Validate if the monitoring condition for a partial task is met"""
-        memory_content = task_memory.get() if task_memory else "No memory available"
-        clean_partial_task = partial_task.replace('"', "'").replace('\n', ' ')[:100]
-        
-        validation_prompt = f"""Monitor: {clean_partial_task}
-Data: {memory_content}
-
-JSON: {{"condition_met": true/false}}"""
-        
-        try:
-            response, token_info = await llm_completion_async(
-                model=self.light_llm,
-                prompt=validation_prompt,
-                temperature=0.0,   # Zero temperature for maximum consistency
-                max_tokens=20,     # Reduced significantly since we only need true/false
-                response_format="json"
-            )
-            
-            if self.logger:
-                self.logger.add_tokens(task_id, token_info)
-            
-            result = json.loads(self._clean_json_response(response))
-            return {
-                "condition_met": result.get("condition_met", False),
-                "message": "Condition checked"  # Simple static message
-            }
-            
-        except Exception:
-            return {"condition_met": False, "message": "Condition checked"}
-
     async def _handle_periodic_execution(self, message: str, task_memory, task_id: str, analysis: dict, frequency_minutes: int):
-        """Handle periodic task execution with partial task support"""
-        partial_task = analysis.get("partial_task")
-        has_partial_task = partial_task is not None
+        """🌟 SIMPLIFIED: Clean periodic execution using conditional logic"""
+        console.info("Starting periodic task", f"Frequency: every {frequency_minutes} minutes", task_id=task_id)
         
-        if has_partial_task:
-            console.info("Starting conditional periodic task", f"Frequency: every {frequency_minutes} minutes", task_id=task_id)
-            # Limit monitoring phase message to 60 characters
-            monitoring_msg = partial_task[:60] + "..." if len(partial_task) > 60 else partial_task
-            console.info("Monitoring phase", monitoring_msg, task_id=task_id)
-        else:
-            console.info("Starting periodic task", f"Frequency: every {frequency_minutes} minutes", task_id=task_id)
-        
-        frequency_seconds = frequency_minutes / 60
+        frequency_seconds = frequency_minutes * 60  # Convert minutes to seconds
         iteration = 1
-        condition_met = False
-        total_computation_time = 0  # Track only computation time, not sleep time
+        total_computation_time = 0
         
         while self.running:
             try:
-                iteration_start = time.time()  # Start timing this iteration
+                iteration_start = time.time()
                 console.info(f"Periodic check #{iteration}", time.strftime('%H:%M:%S'), task_id=task_id)
                 
-                if has_partial_task and not condition_met:
-                    # Phase 1: Execute only monitoring tools
-                    monitoring_tools = analysis.get("monitoring_tools", [])
-                    if monitoring_tools:
-                        await self.execute_tools_sequentially(monitoring_tools, task_memory, f"{task_id}-{iteration}")
-                    
-                    # Check if monitoring condition is met
-                    monitoring_validation = await self.llm_validate_partial_task(partial_task, task_memory, task_id)
-                    
-                    if monitoring_validation.get("condition_met", False):
-                        console.success("Monitoring condition met", monitoring_validation.get('message', 'Proceeding with action phase'), task_id=task_id)
-                        condition_met = True
-                        
-                        # Phase 2: Execute action tools (no re-analysis needed!)
-                        action_tools = analysis.get("action_tools", [])
-                        if action_tools:
-                            console.info("Executing action tools", f"Tools: {', '.join(action_tools)}", task_id=task_id)
-                            await self.execute_tools_sequentially(action_tools, task_memory, f"{task_id}-{iteration}")
-                        
-                        # Validate final completion with feedback loop
-                        final_validation = await self.llm_validate_completion(message, task_memory, task_id)
-                        
-                        if final_validation.get("completed", False):
-                            iteration_time = time.time() - iteration_start
-                            total_computation_time += iteration_time
-                            # Update the logger with actual computation time
-                            if self.logger and task_id in self.logger.active_tasks:
-                                self.logger.active_tasks[task_id]["duration_seconds"] = round(total_computation_time, 2)
-                            return {
-                                "completed": True,
-                                "final_message": final_validation.get('final_message', 'Conditional task completed'),
-                                "computation_time": total_computation_time
-                            }
-                        
-                        # Check for continue_message and apply feedback
-                        continue_message = final_validation.get("continue_message", "").strip()
-                        if continue_message and continue_message != message:
-                            console.info("Applying feedback for conditional task", continue_message[:80] + ("..." if len(continue_message) > 80 else ""), task_id=task_id)
-                            # Re-analyze with the feedback message to get new action tools
-                            feedback_analysis = await self.llm_analyze_task(continue_message, task_memory, task_id)
-                            feedback_tools = feedback_analysis.get("action_tools", feedback_analysis.get("tools", []))
-                            if feedback_tools:
-                                await self.execute_tools_sequentially(feedback_tools, task_memory, f"{task_id}-{iteration}-feedback")
-                                # Re-validate after feedback execution
-                                final_validation = await self.llm_validate_completion(message, task_memory, task_id)
-                                if final_validation.get("completed", False):
-                                    iteration_time = time.time() - iteration_start
-                                    total_computation_time += iteration_time
-                                    # Update the logger with actual computation time
-                                    if self.logger and task_id in self.logger.active_tasks:
-                                        self.logger.active_tasks[task_id]["duration_seconds"] = round(total_computation_time, 2)
-                                    return {
-                                        "completed": True,
-                                        "final_message": final_validation.get('final_message', 'Conditional task completed with feedback'),
-                                        "computation_time": total_computation_time
-                                    }
-                    else:
-                        console.debug("Monitoring condition not met", "Continuing periodic checks", task_id=task_id)
+                # Use conditional logic if enabled, otherwise use tools
+                conditional_logic = analysis.get("conditional_logic", {})
+                if conditional_logic.get("enabled", False):
+                    result = await self._execute_conditional_logic(analysis, task_memory, task_id, message)
                 else:
-                    # No partial task OR condition already met - execute action tools
-                    action_tools = analysis.get("action_tools", analysis.get("tools", []))
-                    await self.execute_tools_sequentially(action_tools, task_memory, f"{task_id}-{iteration}")
+                    # Simple tools execution
+                    tools = analysis.get("tools", [])
+                    if tools:
+                        await self.execute_tools_sequentially(tools, task_memory, f"{task_id}-{iteration}")
                     
-                    # Validate completion with feedback loop
+                    # Validation with timing for periodic tasks
+                    validation_start = time.time()
                     validation = await self.llm_validate_completion(message, task_memory, task_id)
-                    
-                    if validation.get("completed", False):
-                        iteration_time = time.time() - iteration_start
-                        total_computation_time += iteration_time
-                        # Update the logger with actual computation time
-                        if self.logger and task_id in self.logger.active_tasks:
-                            self.logger.active_tasks[task_id]["duration_seconds"] = round(total_computation_time, 2)
-                        return {
-                            "completed": True,
-                            "final_message": validation.get('final_message', 'Periodic task completed'),
-                            "computation_time": total_computation_time
-                        }
-                    
-                    # Check for continue_message and apply feedback
-                    continue_message = validation.get("continue_message", "").strip()
-                    if continue_message and continue_message != message:
-                        console.info("Applying feedback for periodic task", continue_message[:80] + ("..." if len(continue_message) > 80 else ""), task_id=task_id)
-                        # Re-analyze with the feedback message to get new action tools
-                        feedback_analysis = await self.llm_analyze_task(continue_message, task_memory, task_id)
-                        feedback_tools = feedback_analysis.get("action_tools", feedback_analysis.get("tools", []))
-                        if feedback_tools:
-                            await self.execute_tools_sequentially(feedback_tools, task_memory, f"{task_id}-{iteration}-feedback")
-                            # Re-validate after feedback execution
-                            validation = await self.llm_validate_completion(message, task_memory, task_id)
-                            if validation.get("completed", False):
-                                iteration_time = time.time() - iteration_start
-                                total_computation_time += iteration_time
-                                # Update the logger with actual computation time
-                                if self.logger and task_id in self.logger.active_tasks:
-                                    self.logger.active_tasks[task_id]["duration_seconds"] = round(total_computation_time, 2)
-                                return {
-                                    "completed": True,
-                                    "final_message": validation.get('final_message', 'Periodic task completed with feedback'),
-                                    "computation_time": total_computation_time
-                                }
+                    validation_time = time.time() - validation_start
+                    console.debug(f"Periodic validation #{iteration}", f"Time: {validation_time:.2f}s", task_id=task_id)
+                    result = {
+                        "completed": validation.get("completed", False),
+                        "final_message": validation.get("final_message", "Periodic iteration completed")
+                    }
                 
-                # Add this iteration's computation time (excluding sleep)
                 iteration_time = time.time() - iteration_start
                 total_computation_time += iteration_time
+                
+                # If task completed, return success
+                if result.get("completed", False):
+                    if self.logger and task_id in self.logger.active_tasks:
+                        self.logger.active_tasks[task_id]["duration_seconds"] = round(total_computation_time, 2)
+                    return {
+                        "completed": True,
+                        "final_message": result.get("final_message", "Periodic task completed"),
+                        "computation_time": total_computation_time
+                    }
                 
                 console.debug(f"Periodic check #{iteration} completed", "Continuing to next iteration", task_id=task_id)
                 iteration += 1
                 
-                # Wait for next execution (this time is NOT counted in computation time)
-                console.info(f"Next check scheduled", f"in {frequency_minutes} minutes", task_id=task_id)
+                console.info("Next check scheduled", f"in {frequency_minutes} minutes", task_id=task_id)
                 await asyncio.sleep(frequency_seconds)
                 
             except Exception as e:
-                # Add computation time even for failed iterations
                 iteration_time = time.time() - iteration_start
                 total_computation_time += iteration_time
-                console.error(f"Periodic task iteration #{iteration} failed", str(e), task_id=task_id)
-                await asyncio.sleep(frequency_seconds)  # Still wait before next attempt
+                console.error(f"Periodic iteration #{iteration} failed", str(e), task_id=task_id)
+                await asyncio.sleep(frequency_seconds)
                 iteration += 1
         
-        # If we exit the loop (agent stopped), return stopped status with computation time
+        # Agent stopped
         if self.logger and task_id in self.logger.active_tasks:
             self.logger.active_tasks[task_id]["duration_seconds"] = round(total_computation_time, 2)
-        console.warning("Periodic task stopped by system", task_id=task_id)
         return {
             "completed": True,
             "final_message": "Periodic task stopped",

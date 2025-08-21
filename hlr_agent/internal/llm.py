@@ -26,29 +26,60 @@ async def llm_completion_async(
     
     if model.startswith("gpt-"):  # Handle all GPT models
         client = AsyncOpenAI(api_key=api_key)
-        messages = []
-        if system_message:
-            messages.append({"role": "system", "content": system_message})
-        messages.append({"role": "user", "content": prompt})
         
-        extra_params = {}
-        if response_format == "json":
-            extra_params["response_format"] = {"type": "json_object"}
-        
-        response = await client.chat.completions.create(
-            model=model,  # Use the actual model name passed in
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **extra_params
-        )
-        
-        content = response.choices[0].message.content.strip()
-        token_info = {
-            "input_tokens": response.usage.prompt_tokens if response.usage else 0,
-            "output_tokens": response.usage.completion_tokens if response.usage else 0,
-            "total_tokens": response.usage.total_tokens if response.usage else 0
-        }
+        # GPT-5 models use the new responses API
+        if model.startswith("gpt-5"):
+            # Combine system message and prompt for GPT-5
+            full_input = f"{system_message}\n\n{prompt}" if system_message else prompt
+            
+            extra_params = {
+                "reasoning": {"effort": "minimal"},
+                "text": {"verbosity": "low"}
+            }
+            
+            if response_format == "json":
+                # For GPT-5, modify the input to request JSON format
+                full_input += "\n\nRespond with valid JSON only."
+            
+            response = await client.responses.create(
+                model=model,
+                input=full_input,
+                **extra_params
+            )
+            
+            # Access the text content correctly from GPT-5 response
+            content = response.output_text.strip()
+            token_info = {
+                "input_tokens": getattr(response.usage, 'input_tokens', 0) if hasattr(response, 'usage') else 0,
+                "output_tokens": getattr(response.usage, 'output_tokens', 0) if hasattr(response, 'usage') else 0,
+                "total_tokens": getattr(response.usage, 'total_tokens', 0) if hasattr(response, 'usage') else 0
+            }
+            
+        else:
+            # GPT-4 and older models use chat completions API
+            messages = []
+            if system_message:
+                messages.append({"role": "system", "content": system_message})
+            messages.append({"role": "user", "content": prompt})
+            
+            extra_params = {}
+            if response_format == "json":
+                extra_params["response_format"] = {"type": "json_object"}
+            
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **extra_params
+            )
+            
+            content = response.choices[0].message.content.strip()
+            token_info = {
+                "input_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "output_tokens": response.usage.completion_tokens if response.usage else 0,
+                "total_tokens": response.usage.total_tokens if response.usage else 0
+            }
         return content, token_info
     
     elif model.startswith("gemini"):
@@ -74,7 +105,7 @@ def _gemini_sync(model: str, prompt: str, system_message: str, temperature: floa
     if response_format == "json":
         config_params["response_mime_type"] = "application/json"
     
-    if model == "gemini-2.5-flash-lite":
+    if model in ["gemini-2.5-flash-lite", "gemini-2.5-flash"]:
         config_params["thinking_config"] = types.ThinkingConfig(
             thinking_budget=0,
         )

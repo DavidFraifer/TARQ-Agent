@@ -6,9 +6,9 @@ from .utils.logger import HLRLogger
 from .utils.console import console
 
 class Agent:
-    SUPPORTED_MODELS = ["gpt-4o", "gpt-4o-mini", "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b"]
+    SUPPORTED_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-5-nano", "gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
     
-    def __init__(self, tools: List[Union[str, Tool]], light_llm: str = "gemini-2.5-flash-lite", heavy_llm: str = "gemini-2.5-flash-lite", enable_logging: bool = False):
+    def __init__(self, tools: List[Union[str, Tool]], light_llm: str = "gpt-5-nano", heavy_llm: str = "gpt-5-nano", enable_logging: bool = False):
         configure_api_keys()
         
         for model, name in [(light_llm, "light_llm"), (heavy_llm, "heavy_llm")]:

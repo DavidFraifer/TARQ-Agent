@@ -16,10 +16,10 @@ agent = Agent(
 
 agent.start()
 
-user_input = "Enter to gmail, grab the report from the last email and upload that data to a new sheets"
+user_input = "Check the mail"
 #Enter to gmail, grab the report from the last email and upload that data to a new sheets
 #"Watch the gmail each hour until you receive a report in an email. When that happens you have to upload the details into the spreadsheet called '2025' and finish the task."
 agent.run(user_input)
         
-time.sleep(5) 
+time.sleep(60) 
 agent.stop()
