@@ -7,12 +7,10 @@ class TaskMemory:
     def set(self, value: str):
         self._lines.append(str(value))
         
-        # Keep only the last max_lines entries
         if len(self._lines) > self.max_lines:
             excess = len(self._lines) - self.max_lines
             self._lines = self._lines[excess:]
             
-            # Add truncation notice if at capacity
             if not self._lines[0].startswith("[Memory truncated"):
                 self._lines[0] = f"[Memory truncated - showing last {self.max_lines} entries]"
 

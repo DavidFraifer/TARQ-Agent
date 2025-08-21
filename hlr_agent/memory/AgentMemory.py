@@ -16,12 +16,11 @@ class AgentMemory:
     def add_task_memory(self, task_memory: TaskMemory) -> None:
         task_id = task_memory.name
         
-        if task_id in self._task_memories:
-            self._task_memories[task_id] = task_memory
-        else:
-            self._task_memories[task_id] = task_memory
+        if task_id not in self._task_memories:
             self._task_order.append(task_id)
             self._cleanup_if_needed()
+        
+        self._task_memories[task_id] = task_memory
     
     def get_task_memory(self, task_id: str) -> Optional[TaskMemory]:
         """Get a TaskMemory by its ID."""

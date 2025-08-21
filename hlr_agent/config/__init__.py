@@ -18,7 +18,12 @@ def configure_api_keys():
         except Exception:
             continue  # If key not found, continue
     
-    print(f"✅ API keys loaded for: {list(_api_key_cache.keys())}")
+    # Use console only if it's already imported somewhere, otherwise fallback to print
+    try:
+        from ..utils.console import console
+        console.system("API Configuration", f"Loaded keys for: {', '.join(_api_key_cache.keys())}")
+    except ImportError:
+        print(f"✅ API keys loaded for: {list(_api_key_cache.keys())}")
 
 def get_cached_api_key(service: str) -> str:
     """Get cached API key for a service."""

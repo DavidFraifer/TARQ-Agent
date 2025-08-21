@@ -1,74 +1,74 @@
-import asyncio
 import random
-from .tool import Tool
+import time
 
-def _create_tool_func(name: str, action: str, delay: float = 1.0):
-    def tool_func(graph):
-        task_id = graph._memory_ref.name if graph._memory_ref else "unknown"
+def _create_tool_func(name: str, action: str):
+    """Create a tool function for the simplified architecture"""
+    def tool_func(context: str = ""):
+        """Tool function that takes context string instead of graph"""
+        # Import console here to avoid circular imports
+        try:
+            from ..utils.console import console
+        except ImportError:
+            # Fallback if console is not available
+            console = None
         
         if name == "gmail":
-            emails = ["support@company.com", "user@example.com", "admin@wikipedia.org", "john.doe@example.com"]
+            emails = ["support@google.com", "admin@wikipedia.org"]
             current_email = random.choice(emails)
-            message = f"Processed email from: {current_email}"
-            print(message)
-        else:
-            message = f"{action} completed"
-        
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    import time
-                    executor.submit(time.sleep, delay).result()
+            message = f"Email checked - Found message from: {current_email} with subject: 'Monthly Report Available'"
+            if console:
+                console.tool(f"[GMAIL] {message}")
             else:
-                import time
-                time.sleep(delay)
-        except:
-            import time
-            time.sleep(delay)
+                print(f"[Gmail] {message}")
+        elif name == "sheets":
+            message = f"Spreadsheet updated - Added new data row with timestamp {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            if console:
+                console.tool(f"[SHEETS] {message}")
+            else:
+                print(f"[Sheets] {message}")
+        elif name == "drive":
+            message = f"File uploaded to Google Drive - Document saved to /Reports/ folder"
+            if console:
+                console.tool(f"[DRIVE] {message}")
+            else:
+                print(f"[Drive] {message}")
+        elif name == "jira":
+            ticket_id = f"HLR-{random.randint(1000, 9999)}"
+            message = f"Jira ticket created - {ticket_id}: Task tracking ticket generated"
+            if console:
+                console.tool(f"[JIRA] {message}")
+            else:
+                print(f"[Jira] {message}")
+        elif name == "calendar":
+            event_time = time.strftime('%Y-%m-%d %H:%M:%S')
+            message = f"Calendar event created - Meeting scheduled for {event_time}"
+            if console:
+                console.tool(f"[CALENDAR] {message}")
+            else:
+                print(f"[Calendar] {message}")
+        elif name == "slack":
+            message = f"Slack message sent - Notification delivered to #general channel"
+            if console:
+                console.tool(f"[SLACK] {message}")
+            else:
+                print(f"[Slack] {message}")
+        else:
+            message = f"{action} completed successfully"
+            if console:
+                console.tool(f"[{name.upper()}] {message}")
+            else:
+                print(f"[{name}] {message}")
         
-        if graph._memory_ref:
-            graph._memory_ref.set(message)
+        return message
     
     return tool_func
 
 # Internal tools registry
-INTERNAL_TOOLS = {
-    "jira": Tool(
-        name="jira",
-        func=_create_tool_func("jira", "Creating Jira ticket", 1.5),
-        description="Create and manage Jira tickets for task tracking"
-    ),
-    "gmail": Tool(
-        name="gmail", 
-        func=_create_tool_func("gmail", "Processing email", 1.0),
-        description="Read, process, and send emails via Gmail"
-    ),
-    "sheets": Tool(
-        name="sheets",
-        func=_create_tool_func("sheets", "Updating Google Sheets", 2.0),
-        description="Read and update Google Sheets spreadsheets"
-    ),
-    "drive": Tool(
-        name="drive",
-        func=_create_tool_func("drive", "Uploading to Google Drive", 1.2),
-        description="Upload, download, and manage files in Google Drive"
-    ),
-    "calendar": Tool(
-        name="calendar",
-        func=_create_tool_func("calendar", "Creating calendar event", 0.8),
-        description="Create and manage events in Google Calendar"
-    ),
-    "slack": Tool(
-        name="slack",
-        func=_create_tool_func("slack", "Sending Slack message", 0.5),
-        description="Send messages and notifications via Slack"
-    )
+internal_tools = {
+    "jira": _create_tool_func("jira", "Creating Jira ticket"),
+    "gmail": _create_tool_func("gmail", "Processing email"),
+    "sheets": _create_tool_func("sheets", "Updating Google Sheets"),
+    "drive": _create_tool_func("drive", "Uploading to Google Drive"),
+    "calendar": _create_tool_func("calendar", "Creating calendar event"),
+    "slack": _create_tool_func("slack", "Sending Slack message")
 }
-
-def get_internal_tool(tool_name: str) -> Tool:
-    if tool_name not in INTERNAL_TOOLS:
-        available = list(INTERNAL_TOOLS.keys())
-        raise ValueError(f"Internal tool '{tool_name}' not found. Available tools: {available}")
-    return INTERNAL_TOOLS[tool_name]

@@ -1,13 +1,14 @@
 from typing import List, Union
-from .tools import Tool, ToolGraphBuilder
-from .c_layers.C1 import C1
+from .tools import Tool
+from .core.orchestrator import Orchestrator
 from .config import configure_api_keys
-from .utils.logger import TaskLogger
+from .utils.logger import HLRLogger
+from .utils.console import console
 
 class Agent:
-    SUPPORTED_MODELS = ["gpt-4o", "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b"]
+    SUPPORTED_MODELS = ["gpt-4o", "gpt-4o-mini", "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b"]
     
-    def __init__(self, tools: List[Union[str, Tool]], light_llm: str, heavy_llm: str, enable_logging: bool = False):
+    def __init__(self, tools: List[Union[str, Tool]], light_llm: str = "gemini-2.5-flash-lite", heavy_llm: str = "gemini-2.5-flash-lite", enable_logging: bool = False):
         configure_api_keys()
         
         for model, name in [(light_llm, "light_llm"), (heavy_llm, "heavy_llm")]:
@@ -17,36 +18,63 @@ class Agent:
         self.tools = tools
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
-        self.enable_logging = enable_logging
-        self.logger = TaskLogger() if enable_logging else None
-        self.graph = ToolGraphBuilder.build_graph(tools, light_llm, heavy_llm)
-        self.c1 = C1(self.graph)
+        self.logger = HLRLogger() if enable_logging else None
+        self.orchestrator = Orchestrator(logger=self.logger, light_llm=light_llm, heavy_llm=heavy_llm)
         self.running = False
         
-        if self.logger:
-            self.c1.set_logger(self.logger)
+        self._configure_tools()
+    
+    def _configure_tools(self):
+        """Configure which tools are available to the orchestrator"""
+        if not self.tools:
+            raise ValueError("Tools list cannot be empty. Please provide at least one tool.")
+        
+        self.orchestrator.tools.tools.clear()
+        from .tools.internal_tools import internal_tools
+        
+        for tool in self.tools:
+            if isinstance(tool, Tool):
+                self.orchestrator.add_tool(tool.name, tool.func)
+            elif isinstance(tool, str) and tool in internal_tools:
+                self.orchestrator.add_tool(tool, internal_tools[tool])
+            else:
+                console.warning(f"Tool '{tool}' not found in internal tools")
+    
+    def add_tool(self, name: str, func):
+        """Add a tool to the agent"""
+        self.orchestrator.add_tool(name, func)
         
     def start(self):
-        print("[Agent] Starting...")
         if not self.running:
-            self.c1.start()
+            self.orchestrator.start()
             self.running = True
+            available_tools = list(self.orchestrator.tools.tools.keys())
+            console.system("Agent started", f"Available tools: {', '.join(available_tools)}")
         
     def stop(self):
         if self.running:
-            self.c1.stop()
+            self.orchestrator.stop()
             self.running = False
     
     def run(self, message: str):
+        """Run a task with the agent"""
         if not self.running:
             raise RuntimeError("Agent must be started before running tasks. Call agent.start() first.")
         
-        self.c1.receive_message(message)
+        self.orchestrator.receive_message(message)
         
     def get_available_tools(self) -> List[str]:
-        return [tool.name if isinstance(tool, Tool) else tool for tool in self.tools]
+        """Get list of available tools"""
+        return list(self.orchestrator.tools.tools.keys())
+    
+    @staticmethod
+    def get_all_internal_tools() -> List[str]:
+        """Get list of all internal tools that can be used"""
+        from .tools.internal_tools import internal_tools
+        return list(internal_tools.keys())
     
     def get_log_stats(self) -> dict:
+        """Get logging statistics"""
         if self.logger:
             return self.logger.get_log_stats()
         return {"logging": "disabled"}

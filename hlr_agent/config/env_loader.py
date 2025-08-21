@@ -46,17 +46,14 @@ class EnvLoader:
                     key, value = line.split('=', 1)
                     key, value = key.strip(), value.strip()
                     
-                    if (value.startswith('"') and value.endswith('"')) or \
-                       (value.startswith("'") and value.endswith("'")):
+                    if value.startswith(('"', "'")) and value.endswith(('"', "'")):
                         value = value[1:-1]
                     
                     self._env_vars[key] = value
                     os.environ[key] = value
             
-            print(f"🔧 Loaded environment variables from: {env_path}")
-            
-        except Exception as e:
-            print(f"Warning: Could not load .env file from {env_path}: {e}")
+        except Exception:
+            pass
     
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
         return self._env_vars.get(key) or os.environ.get(key) or default
@@ -92,6 +89,7 @@ class EnvLoader:
             else:
                 masked_vars[key] = value
         return masked_vars
+
 _env_loader = None
 
 def get_env_loader() -> EnvLoader:

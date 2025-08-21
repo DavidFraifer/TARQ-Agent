@@ -1,25 +1,25 @@
-
 """
-Basic HLR Agent example showing email processing workflow.
+Simple interactive chat example with HLR Agent.
+Type messages and see the agent process them in real-time.
 """
 
-from hlr_agent import Agent
 import time
+from hlr_agent import Agent
 
-# Create and configure agent
+
 agent = Agent(
-    tools=["gmail", "jira", "sheets"], 
-    light_llm="gemini-2.5-flash-lite",    
+    tools=['jira', 'gmail', 'sheets', 'drive', 'calendar', 'slack'],
+    light_llm="gemini-2.5-flash-lite",
     heavy_llm="gemini-2.5-flash-lite",
     enable_logging=True
-    
 )
 
-# Start agent, submit task, wait, and stop
 agent.start()
-agent.run("Check my gmail inbox and look for an email from john.doe@example.com then create a Jira ticket with the email subject.")
 
-time.sleep(15)
-
+user_input = "Enter to gmail, grab the report from the last email and upload that data to a new sheets"
+#Enter to gmail, grab the report from the last email and upload that data to a new sheets
+#"Watch the gmail each hour until you receive a report in an email. When that happens you have to upload the details into the spreadsheet called '2025' and finish the task."
+agent.run(user_input)
+        
+time.sleep(5) 
 agent.stop()
-print("✅ Example completed!")

@@ -1,6 +1,5 @@
-"""Utilities for HLR Agent"""
+"""Utilities for HLR Agent - Simplified Architecture"""
 
-from .tool_graph_builder import ToolGraphBuilder
-from .logger import TaskLogger
+from .logger import HLRLogger
 
-__all__ = ['ToolGraphBuilder', 'TaskLogger']
+__all__ = ['HLRLogger']
