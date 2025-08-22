@@ -81,7 +81,9 @@ class Orchestrator:
         task_id = f"{int(start_time * 1000) % 100000000:08d}"
         task_memory = self.agent_memory.create_task_memory(f"Task-{task_id}")
         
-        console.task(f"Task {task_id} ADDED", task_id=task_id)
+        # Truncate message for logging display
+        display_message = message[:60] + "..." if len(message) > 60 else message
+        console.task(f"Task {task_id} ADDED - {display_message}", task_id=task_id)
         
         if self.logger:
             self.logger.start_task(task_id, message)
@@ -89,11 +91,8 @@ class Orchestrator:
         try:
             result = await self.handle_message(message, task_memory, task_id)
             
-            # For periodic tasks, use the computation time instead of total elapsed time
-            if result.get("computation_time") is not None:
-                task_duration = result["computation_time"]
-            else:
-                task_duration = time.time() - start_time
+            # Always use actual elapsed time for consistency
+            task_duration = time.time() - start_time
             
             # Get token information for summary
             token_info = {}
@@ -213,7 +212,7 @@ Rules: first of "tools" gathers data; use "else" for natural if/else; return emp
                 model=self.heavy_llm, 
                 prompt=analysis_prompt,
                 temperature=0.0,  # Maximum determinism
-                max_tokens=80,  # Reduced from 100 (conservative)  
+                max_tokens=220,  
                 response_format="json"
             )
             
@@ -221,13 +220,42 @@ Rules: first of "tools" gathers data; use "else" for natural if/else; return emp
                 self.logger.add_tokens(task_id, token_info)
             
             result = json.loads(response)
+            
+            # TEMPORARY DEBUG: Print the parsed analysis result
+            console.debug(f"Analysis Result", f"{result}", task_id=task_id)
+            
             return result
             
         except Exception as e:
             return {"tools": [], "frequency_minutes": 0, "conditional_logic": {"enabled": False, "conditions": []}}
 
+    def _extract_tool_names(self, tools_data):
+        """Safely extract tool names from various formats"""
+        if not tools_data:
+            return []
+        
+        tool_names = []
+        for item in tools_data:
+            if isinstance(item, str):
+                tool_names.append(item)
+            elif isinstance(item, dict):
+                # Handle {"tool": "name"} format
+                if "tool" in item:
+                    tool_names.append(item["tool"])
+                # Handle {"name": "tool_name"} format
+                elif "name" in item:
+                    tool_names.append(item["name"])
+                # Handle other dict formats by taking first string value
+                else:
+                    for value in item.values():
+                        if isinstance(value, str):
+                            tool_names.append(value)
+                            break
+        return tool_names
+
     async def _execute_conditional_logic(self, analysis: dict, task_memory, task_id: str, original_message: str) -> dict:
         """🌟 NATURAL: Execute data gathering tool → Evaluate conditions with if-else logic"""
+        execution_start = time.time()
         try:
             # Step 1: Execute first tool to gather data (usually monitoring tool like gmail)
             tools = analysis.get("tools", [])
@@ -244,8 +272,12 @@ Rules: first of "tools" gathers data; use "else" for natural if/else; return emp
             
             for condition in conditions:
                 condition_text = condition.get("if", "")
-                then_tools = condition.get("then", [])
-                else_tools = condition.get("else", [])
+                then_tools_raw = condition.get("then", [])
+                else_tools_raw = condition.get("else", [])
+                
+                # Safely extract tool names
+                then_tools = self._extract_tool_names(then_tools_raw)
+                else_tools = self._extract_tool_names(else_tools_raw)
                 
                 # Evaluate condition and execute appropriate tools
                 condition_result, condition_time = await self._evaluate_single_condition(condition_text, monitoring_data, task_id)
@@ -269,21 +301,28 @@ Rules: first of "tools" gathers data; use "else" for natural if/else; return emp
                 validation = await self.llm_validate_completion(original_message, task_memory, task_id)
                 validation_time = time.time() - validation_start
                 console.debug("Conditional validation completed", f"Time: {validation_time:.2f}s", task_id=task_id)
+                
+                execution_time = time.time() - execution_start
                 return {
                     "completed": validation.get("completed", True),
-                    "final_message": validation.get("final_message", execution_summary)
+                    "final_message": validation.get("final_message", execution_summary),
+                    "execution_time": execution_time
                 }
             
             # No conditions executed
+            execution_time = time.time() - execution_start
             return {
                 "completed": True, 
-                "final_message": "No conditions or else clauses were executed"
+                "final_message": "No conditions or else clauses were executed",
+                "execution_time": execution_time
             }
             
         except Exception as e:
+            execution_time = time.time() - execution_start
             return {
                 "completed": True, 
-                "final_message": f"Conditional execution failed: {str(e)}"
+                "final_message": f"Conditional execution failed: {str(e)}",
+                "execution_time": execution_time
             }
 
     async def _evaluate_single_condition(self, condition: str, data: str, task_id: str) -> tuple[bool, float]:
@@ -296,13 +335,16 @@ JSON: {{"met": true/false}}"""
         
         condition_start = time.time()
         try:
-            response, _ = await llm_completion_async(
+            response, token_info = await llm_completion_async(
                 model=self.light_llm,
                 prompt=prompt,
                 temperature=0.0,
                 max_tokens=25,  # Increased to ensure complete JSON response
                 response_format="json"
             )
+            
+            if self.logger:
+                self.logger.add_tokens(task_id, token_info)
             
             result = json.loads(self._clean_json_response(response))
             is_met = result.get("met", False)
@@ -319,7 +361,7 @@ JSON: {{"met": true/false}}"""
             if tool_name in self.tools.tools:
                 try:
                     context = task_memory.get() if task_memory else ""
-                    result = await self.tools.execute_tool(tool_name, context)
+                    result = await self.tools.execute_tool(tool_name, context, task_id=task_id)
                     task_memory.set(f"Tool {tool_name} result: {result}")
                 except Exception as e:
                     console.error(f"Tool '{tool_name}' execution failed", str(e), task_id=task_id)
@@ -366,7 +408,7 @@ JSON: {{"completed": true/false, "final_message": "summary", "continue_message":
         """🌟 SIMPLIFIED: Clean periodic execution using conditional logic"""
         console.info("Starting periodic task", f"Frequency: every {frequency_minutes} minutes", task_id=task_id)
         
-        frequency_seconds = frequency_minutes * 60  # Convert minutes to seconds
+        frequency_seconds = frequency_minutes / 60  # Convert minutes to seconds
         iteration = 1
         total_computation_time = 0
         
@@ -379,6 +421,8 @@ JSON: {{"completed": true/false, "final_message": "summary", "continue_message":
                 conditional_logic = analysis.get("conditional_logic", {})
                 if conditional_logic.get("enabled", False):
                     result = await self._execute_conditional_logic(analysis, task_memory, task_id, message)
+                    # Use the execution time from conditional logic instead of iteration time
+                    iteration_time = result.get("execution_time", time.time() - iteration_start)
                 else:
                     # Simple tools execution
                     tools = analysis.get("tools", [])
@@ -394,8 +438,8 @@ JSON: {{"completed": true/false, "final_message": "summary", "continue_message":
                         "completed": validation.get("completed", False),
                         "final_message": validation.get("final_message", "Periodic iteration completed")
                     }
+                    iteration_time = time.time() - iteration_start
                 
-                iteration_time = time.time() - iteration_start
                 total_computation_time += iteration_time
                 
                 # If task completed, return success

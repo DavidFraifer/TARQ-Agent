@@ -105,7 +105,7 @@ def _gemini_sync(model: str, prompt: str, system_message: str, temperature: floa
     if response_format == "json":
         config_params["response_mime_type"] = "application/json"
     
-    if model in ["gemini-2.5-flash-lite", "gemini-2.5-flash"]:
+    if model.startswith("gemini-2.5"):
         config_params["thinking_config"] = types.ThinkingConfig(
             thinking_budget=0,
         )
