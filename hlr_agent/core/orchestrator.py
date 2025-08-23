@@ -158,8 +158,7 @@ OUTPUT ONLY VALID DSL TEXT:
 DSL Commands:
 W N = wait N minutes
 F TOOL = fetch data from tool
-A TOOL = action/execute tool
-A TOOL ACTION = action with specific action
+A TOOL = action/execute tool (just tool name, no extra parameters)
 IF CONDITION = conditional start
 ELSEIF CONDITION = else if condition
 ELSE = else clause
@@ -198,7 +197,7 @@ WHILE TRUE
   W 60
 ENDWHILE
 
-Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "periodically", "until", "watch" keywords.
+Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "periodically", "until", "watch" keywords. Use only tool names (A jira, A slack) without extra parameters.
 """
         try:
             response, token_info = await llm_completion_async(

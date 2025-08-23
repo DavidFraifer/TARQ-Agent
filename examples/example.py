@@ -29,10 +29,10 @@ agent.start()
 # LEVEL 4 (Advanced): Periodic monitoring with conditional execution - Duration: 3.98s Tokens: 438 (input: 378, output: 60) | LLM Calls: 3
 # user_input = "Watch the gmail each hour until you receive a report in an email. When that happens you have to upload the details into the spreadsheet called '2025' and finish the task"
 
-# LEVEL 5 (Expert): Complex multi-conditional with feedback loops and multiple integrations - GOOD: DURATION AND TOKENS CANNOT BE TESTED
+# LEVEL 5 (Expert): Complex multi-conditional with feedback loops and multiple integrations - COMPLETED: DURATION AND TOKENS CANNOT BE TESTED
 #user_input = "Check gmail periodically every 15 minutes for monthly reports. If sender is from 'admin@google.com', immediately create a Jira ticket and schedule emergency meeting. If from 'support@google.com', update spreadsheet and send success notification to Slack."
 
-user_input = "Check my gmail inbox for new messages"
+user_input = "Check gmail periodically every 15 minutes for monthly reports. If sender is from 'admin@google.com', immediately create a Jira ticket and schedule emergency meeting. If from 'support@google.com', update spreadsheet and send success notification to Slack."
 agent.run(user_input)
         
 time.sleep(60) 
