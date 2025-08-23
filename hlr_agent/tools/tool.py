@@ -3,7 +3,7 @@ import asyncio
 
 class Tool:
     """Tool class for backward compatibility - now works with simplified architecture"""
-    def __init__(self, name: str, func: Callable[[str], Optional[str]], description: str, children: Optional[list] = None):
+    def __init__(self, name: str, func: Callable[[str], Optional[str]], description: str):
         if not name or not name.strip():
             raise ValueError("Tool name is required and cannot be empty.")
         if not description or not description.strip():
@@ -14,7 +14,6 @@ class Tool:
         self.name = name.strip()
         self.func = func
         self.description = description.strip()
-        self.children = children
         
     def __repr__(self):
         return f"Tool(name='{self.name}', description='{self.description}')"
@@ -31,15 +30,6 @@ class ToolContainer:
         if not name or not callable(func):
             raise ValueError("Tool name and callable function required")
         self.tools[name.strip()] = func
-        
-    def remove_tool(self, name: str):
-        """Remove a tool from the container"""
-        if name in self.tools:
-            del self.tools[name]
-            
-    def has_tool(self, name: str) -> bool:
-        """Check if a tool exists"""
-        return name in self.tools
         
     async def execute_tool(self, name: str, context: str = "", task_id: str = None) -> str:
         """Execute a tool with the given context"""
@@ -68,7 +58,3 @@ class ToolContainer:
             
         except Exception as e:
             raise Exception(f"Tool '{name}' execution failed: {str(e)}")
-    
-    def get_tool_names(self) -> list:
-        """Get list of available tool names"""
-        return list(self.tools.keys())

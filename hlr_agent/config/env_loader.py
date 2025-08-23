@@ -62,7 +62,6 @@ class EnvLoader:
         key_mappings = {
             'openai': ['OPENAI_API_KEY', 'OPENAI_KEY'],
             'gemini': ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_KEY'],
-            'brave': ['BRAVE_API_KEY', 'BRAVE_KEY'],
         }
         
         for key in key_mappings.get(service.lower(), [f"{service.upper()}_API_KEY"]):
@@ -80,15 +79,6 @@ class EnvLoader:
                 f"Please add one of these to your .env file: {service.upper()}_API_KEY, {service.upper()}_KEY"
             )
         return api_key
-    
-    def list_available_keys(self) -> Dict[str, str]:
-        masked_vars = {}
-        for key, value in self._env_vars.items():
-            if any(word in key.lower() for word in ['key', 'token', 'secret']):
-                masked_vars[key] = f"{value[:4]}...{value[-4:]}" if len(value) > 8 else "***"
-            else:
-                masked_vars[key] = value
-        return masked_vars
 
 _env_loader = None
 

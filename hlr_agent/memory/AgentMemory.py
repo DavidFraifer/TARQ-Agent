@@ -26,13 +26,6 @@ class AgentMemory:
         """Get a TaskMemory by its ID."""
         return self._task_memories.get(task_id)
     
-    def get_recent_tasks(self, count: int = 10) -> List[TaskMemory]:
-        recent_ids = self._task_order[-count:] if count > 0 else self._task_order
-        return [self._task_memories[task_id] for task_id in recent_ids if task_id in self._task_memories]
-    
-    def get_task_count(self) -> int:
-        return len(self._task_memories)
-    
     def _cleanup_if_needed(self) -> None:
         while len(self._task_memories) > self.max_tasks and self._task_order:
             oldest_task_id = self._task_order.pop(0)

@@ -28,10 +28,6 @@ class HLRLogger:
             "has_completion_condition": has_completion_condition
         }
     
-    def increment_iteration(self, task_id: str):
-        if task_id in self.active_tasks:
-            self.active_tasks[task_id]["iterations"] += 1
-    
     def add_tokens(self, task_id: str, token_info: dict):
         if task_id in self.active_tasks:
             self.active_tasks[task_id]["tokens_used"] += token_info.get("total_tokens", 0)

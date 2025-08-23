@@ -16,6 +16,3 @@ class TaskMemory:
 
     def get(self) -> str:
         return "\n".join(f"{i+1}. {line}" for i, line in enumerate(self._lines)) if self._lines else ""
-    
-    def get_line_count(self) -> int:
-        return len(self._lines)

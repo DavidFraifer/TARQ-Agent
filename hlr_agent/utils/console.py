@@ -1,5 +1,4 @@
 # console.py - Professional Console Output System
-import sys
 import time
 import threading
 from typing import Optional
@@ -57,8 +56,6 @@ class ProfessionalConsole:
     
     def __init__(self, enable_colors: bool = True):
         self.enable_colors = enable_colors
-        self.spinner_active = False
-        self.spinner_thread = None
         self._lock = threading.Lock()
         
         # Define color schemes for different log levels
@@ -72,10 +69,6 @@ class ProfessionalConsole:
             LogLevel.SYSTEM: Colors.MAGENTA,
             LogLevel.TOOL: Colors.YELLOW
         }
-        
-        # Spinner characters for loading animation
-        self.spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        self.spinner_index = 0
     
     def _colorize(self, text: str, color: str) -> str:
         """Apply color to text if colors are enabled"""
@@ -109,14 +102,8 @@ class ProfessionalConsole:
     def print(self, level: LogLevel, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
         """Print a formatted message"""
         with self._lock:
-            if self.spinner_active:
-                self._clear_spinner_line()
-            
             formatted = self._format_message(level, message, details, task_id)
             print(formatted)
-            
-            if self.spinner_active:
-                self._show_spinner_line()
     
     def info(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
         """Print info message"""
@@ -150,67 +137,6 @@ class ProfessionalConsole:
         """Print tool-related message"""
         self.print(LogLevel.TOOL, message, details, task_id)
     
-    def start_spinner(self, message: str = "Processing"):
-        """Start animated spinner"""
-        if self.spinner_active:
-            return
-            
-        self.spinner_active = True
-        self.spinner_message = message
-        self.spinner_thread = threading.Thread(target=self._spinner_worker, daemon=True)
-        self.spinner_thread.start()
-    
-    def stop_spinner(self, final_message: Optional[str] = None):
-        """Stop animated spinner"""
-        if not self.spinner_active:
-            return
-            
-        self.spinner_active = False
-        if self.spinner_thread:
-            self.spinner_thread.join()
-        
-        with self._lock:
-            self._clear_spinner_line()
-            if final_message:
-                self.success(final_message)
-    
-    def _spinner_worker(self):
-        """Worker thread for spinner animation"""
-        while self.spinner_active:
-            with self._lock:
-                self._show_spinner_line()
-            time.sleep(0.1)
-            self.spinner_index = (self.spinner_index + 1) % len(self.spinner_chars)
-    
-    def _show_spinner_line(self):
-        """Show the spinner line"""
-        if not self.spinner_active:
-            return
-            
-        spinner_char = self.spinner_chars[self.spinner_index]
-        timestamp = self._colorize(self._get_timestamp(), Colors.DIM)
-        spinner_colored = self._colorize(spinner_char, Colors.CYAN + Colors.BOLD)
-        message_colored = self._colorize(self.spinner_message, Colors.CYAN)
-        
-        line = f"{timestamp} {spinner_colored} {message_colored}..."
-        print(f"\r{line}", end="", flush=True)
-    
-    def _clear_spinner_line(self):
-        """Clear the current spinner line"""
-        print(f"\r{' ' * 80}\r", end="", flush=True)
-    
-    def section_header(self, title: str):
-        """Print a section header"""
-        border = "=" * 60
-        border_colored = self._colorize(border, Colors.BLUE + Colors.BOLD)
-        title_colored = self._colorize(f" {title} ", Colors.WHITE + Colors.BOLD + Colors.BG_BLUE)
-        
-        print()
-        print(border_colored)
-        print(title_colored)
-        print(border_colored)
-        print()
-    
     def task_summary(self, task_id: str, duration: float, tokens: dict, status: str, final_message: str = None):
         """Print a formatted task summary"""
         status_color = Colors.GREEN if status == "completed" else Colors.YELLOW if status == "incomplete" else Colors.RED
@@ -238,28 +164,6 @@ class ProfessionalConsole:
             self.task(f"Task {task_id} {status_text}")
         
         self.info(timing_info, f"{tokens_info} | {calls_info}")
-    
-    def progress_bar(self, current: int, total: int, width: int = 40, message: str = "Progress"):
-        """Display a progress bar"""
-        if total == 0:
-            percentage = 100
-            filled = width
-        else:
-            percentage = (current / total) * 100
-            filled = int(width * current / total)
-        
-        bar = "█" * filled + "░" * (width - filled)
-        bar_colored = self._colorize(bar, Colors.GREEN if percentage == 100 else Colors.CYAN)
-        percentage_colored = self._colorize(f"{percentage:5.1f}%", Colors.BOLD)
-        
-        with self._lock:
-            if self.spinner_active:
-                self._clear_spinner_line()
-            
-            print(f"\r{message}: {bar_colored} {percentage_colored} ({current}/{total})", end="", flush=True)
-            
-            if current >= total:
-                print()  # New line when complete
 
 # Global console instance
 console = ProfessionalConsole()
