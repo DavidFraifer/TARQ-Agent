@@ -126,6 +126,8 @@ class Orchestrator:
             analysis_start = time.time()
             analysis = await self.llm_analyze_task(message, task_memory, task_id)
             analysis_time = time.time() - analysis_start
+            
+            # Print timing info
             console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
             
             # Execute the DSL flow
@@ -145,8 +147,8 @@ class Orchestrator:
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
         # Limit memory context to save tokens
         memory_content = task_memory.get() if task_memory else "No context"
-        if len(memory_content) > 200:  # Limit context length
-            memory_content = memory_content[-200:]  # Keep last 200 chars
+        if len(memory_content) > 200:
+            memory_content = memory_content[-200:]
         available_tools = list(self.tools.tools.keys())
         
         analysis_prompt = f"""Task: "{message}"
@@ -211,16 +213,14 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
             if self.logger:
                 self.logger.add_tokens(task_id, token_info)
             
-            # Print the raw LLM analysis output
-            print(f"\n=== LLM Analysis Output for Task {task_id} ===")
-            print(response)
-            print("=" * 50)
+            # Print the raw LLM analysis output in multi-line format for readability
+            print(f"DSL Generated for Task {task_id}:")
+            for line in response.strip().split('\n'):
+                if line.strip():
+                    print(f"  {line}")
             
             # Parse text DSL instead of JSON
             flow = self._parse_text_dsl(response)
-            print(f"\n=== Parsed Flow for Task {task_id} ===")
-            print(flow)
-            print("=" * 50)
             result = {"flow": flow}
             
             return result
@@ -230,7 +230,7 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
 
     def _parse_text_dsl(self, text: str) -> List:
         """Parse text DSL into array format for execution"""
-        lines = [line.rstrip() for line in text.strip().split('\n') if line.strip()]  # Keep leading spaces, remove trailing
+        lines = [line.rstrip() for line in text.strip().split('\n') if line.strip()]
         flow = []
         i = 0
         
@@ -252,12 +252,8 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
                 # Action command: A jira -> ["A", "jira"]
                 parts = line.strip().split()
                 tool = parts[1]
-                action = parts[2] if len(parts) > 2 else "execute"
-                if action == "execute":
-                    flow.append(["A", tool])
-                else:
-                    flow.append(["A", tool, action])
-                    
+                flow.append(["A", tool])
+                
             elif line.strip() == 'STOP':
                 # Stop command: STOP -> ["STOP"]
                 flow.append(["STOP"])
@@ -395,11 +391,10 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
                 
                 elif command == "A":  # Action
                     tool = step[1]
-                    action = step[2] if len(step) > 2 else "execute"
-                    console.info(f"Executing action", f"Tool: {tool}, Action: {action}", task_id=task_id)
+                    console.info(f"Executing action", f"Tool: {tool}", task_id=task_id)
                     context = task_memory.get() if task_memory else ""
                     result = await self.tools.execute_tool(tool, context, task_id=task_id)
-                    task_memory.set(f"Action {tool} {action}: {result}")
+                    task_memory.set(f"Action {tool}: {result}")
                 
                 elif command == "IF":  # Conditional
                     condition = step[1]
@@ -441,8 +436,7 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
                         sub_result = await self._execute_dsl_flow(body_steps, task_memory, task_id, original_message, last_fetch_result, skip_validation=True)
                         
                         # Check if STOP command was executed (always exit on STOP, even for infinite loops)
-                        if sub_result.get("completed", False) and "STOP command" in sub_result.get("final_message", ""):
-                            console.info(f"WHILE loop ended", f"STOP command executed in iteration #{iteration}", task_id=task_id)
+                        if sub_result.get("completed", False) and sub_result.get("stopped_via_command", False):
                             return sub_result
                         
                         # For finite loops, exit if sub-result is "completed"
@@ -451,33 +445,62 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
                         
                         iteration += 1
                 
-                elif command == "FOR":  # Loop N times
-                    count = step[1] if len(step) > 1 and isinstance(step[1], int) else 1
-                    body_steps = step[2] if len(step) > 2 else []
-                    
-                    console.info(f"Starting FOR loop", f"Count: {count}", task_id=task_id)
-                    
-                    for i in range(count):
-                        console.info(f"FOR iteration #{i+1}/{count}", f"Executing body steps", task_id=task_id)
-                        sub_result = await self._execute_dsl_flow(body_steps, task_memory, task_id, original_message, last_fetch_result)
-                        
-                        if sub_result.get("completed", False):
-                            return sub_result
+                # Remove unused FOR loop command - not in DSL spec
                 
                 elif command == "WAIT":  # Wait/Sleep
                     minutes = step[1] if len(step) > 1 else 1
                     seconds = minutes / 60  # Convert minutes to seconds
-                    console.info(f"Waiting", f"{minutes} minutes ({seconds}s)", task_id=task_id)
+                    console.info(f"Waiting", f"{minutes} minutes", task_id=task_id)
                     await asyncio.sleep(seconds)
                 
                 elif command == "STOP":  # Stop execution
                     console.info(f"STOP command reached", "Completing task", task_id=task_id)
-                    execution_time = time.time() - execution_start
-                    return {
-                        "completed": True,
-                        "final_message": "Task completed via STOP command",
-                        "execution_time": execution_time
-                    }
+                    
+                    # Run validation to get proper final message
+                    validation_start = time.time()
+                    validation = await self.llm_validate_completion(original_message, task_memory, task_id)
+                    validation_time = time.time() - validation_start
+                    console.debug("STOP validation completed", f"Time: {validation_time:.2f}s", task_id=task_id)
+                    
+                    # Check if task is actually complete or needs more work
+                    if validation.get("completed", True):
+                        execution_time = time.time() - execution_start
+                        return {
+                            "completed": True,
+                            "stopped_via_command": True,  # Flag to indicate STOP command was used
+                            "final_message": validation.get("final_message", "Task completed via STOP command"),
+                            "execution_time": execution_time
+                        }
+                    else:
+                        # Task is not complete, check for continue_message for feedback loop
+                        continue_message = validation.get("continue_message", "")
+                        if continue_message:
+                            console.info("Task incomplete", "Re-analyzing with additional context", task_id=task_id)
+                            
+                            # Create extended task description with continue guidance
+                            extended_task = f"{original_message}\n\nPrevious progress context: {continue_message}"
+                            
+                            # Re-analyze the task with the additional context
+                            analysis_start = time.time()
+                            new_analysis = await self.llm_analyze_task(extended_task, task_memory, task_id)
+                            analysis_time = time.time() - analysis_start
+                            console.debug("Re-analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
+                            
+                            if new_analysis and new_analysis.get("flow"):
+                                console.debug("Re-analysis generated new plan", "Continuing with new flow", task_id=task_id)
+                                # Continue with new analysis - restart the loop
+                                return await self._execute_dsl_flow(new_analysis["flow"], task_memory, task_id, original_message, "", skip_validation)
+                            else:
+                                console.warning("Re-analysis failed", "Completing with partial results", task_id=task_id)
+                        
+                        # If no continue_message or re-analysis failed, complete with current state
+                        execution_time = time.time() - execution_start
+                        return {
+                            "completed": False,
+                            "stopped_via_command": True,
+                            "final_message": validation.get("final_message", "Task partially completed via STOP command"),
+                            "execution_time": execution_time
+                        }
             
             # For infinite loops, never exit - keep running indefinitely
             if has_infinite_loop:
@@ -520,12 +543,23 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
 
     async def _evaluate_dsl_condition(self, condition: str, last_result: str, task_id: str) -> tuple[bool, float]:
         """Evaluate DSL condition against last_result"""
+        condition_start = time.time()
+        
+        # Optimize obvious conditions without LLM call
+        condition_lower = condition.lower().strip()
+        if condition_lower in ["true", "1", "always"]:
+            condition_time = time.time() - condition_start
+            return True, condition_time
+        elif condition_lower in ["false", "0", "never"]:
+            condition_time = time.time() - condition_start
+            return False, condition_time
+        
+        # Use LLM for complex conditions
         prompt = f"""Info: {last_result}
 
 Check if this condition is met: {condition}
 JSON: {{"met": true/false}}"""
         
-        condition_start = time.time()
         try:
             response, token_info = await llm_completion_async(
                 model=self.light_llm,
@@ -550,13 +584,16 @@ JSON: {{"met": true/false}}"""
     async def llm_validate_completion(self, original_message: str, task_memory, task_id: str):
         # Limit memory for validation to save tokens
         memory_content = task_memory.get() if task_memory else "No results"
-        if len(memory_content) > 300:  # Limit results length
-            memory_content = memory_content[-300:]  # Keep last 300 chars
+        if len(memory_content) > 300:
+            memory_content = memory_content[-300:]
         
         validation_prompt = f"""Task: {original_message}
 Results: {memory_content}
 
-JSON: {{"completed": true/false, "final_message": "summary"}}"""
+COMPLETED: provide final_message, leave continue_message empty
+INCOMPLETE: provide continue_message, leave final_message empty
+
+JSON: {{"final_message": "", "continue_message": ""}}"""
         
         try:
             response, token_info = await llm_completion_async(
@@ -567,9 +604,16 @@ JSON: {{"completed": true/false, "final_message": "summary"}}"""
                 self.logger.add_tokens(task_id, token_info)
             
             result = json.loads(response.strip())
+            final_message = result.get("final_message", "").strip()
+            continue_message = result.get("continue_message", "").strip()
+            
+            # Determine completion based on which message is populated
+            completed = bool(final_message and not continue_message)
+            
             return {
-                "completed": result.get("completed", False),
-                "final_message": result.get("final_message", "Task execution completed")
+                "completed": completed,
+                "final_message": final_message if final_message else "Task execution completed",
+                "continue_message": continue_message
             }
             
         except Exception:
