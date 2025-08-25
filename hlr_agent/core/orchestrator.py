@@ -81,6 +81,10 @@ class Orchestrator:
         task_id = f"{int(start_time * 1000) % 100000000:08d}"
         task_memory = self.agent_memory.create_task_memory(f"Task-{task_id}")
         
+        # Initialize wait time tracking
+        self.wait_times = {}
+        self.wait_times[task_id] = 0.0
+        
         # Truncate message for logging display
         display_message = message[:60] + "..." if len(message) > 60 else message
         console.task(f"Task {task_id} ADDED - {display_message}", task_id=task_id)
@@ -93,6 +97,10 @@ class Orchestrator:
             
             # Always use actual elapsed time for consistency
             task_duration = time.time() - start_time
+            
+            # Calculate computational time (total time - wait time)
+            total_wait_time = self.wait_times.get(task_id, 0.0)
+            computational_time = task_duration - total_wait_time
             
             # Get token information for summary
             token_info = {}
@@ -108,17 +116,21 @@ class Orchestrator:
             status = "completed" if result.get("completed", True) else "incomplete"
             final_message = result.get('final_message', "Task execution finished" if status == "completed" else "Task incomplete")
             
-            # Display task summary (this will show the completion status and message)
-            console.task_summary(task_id, task_duration, token_info, status, final_message)
+            # Display task summary with both timing types
+            console.task_summary(task_id, task_duration, token_info, status, final_message, computational_time)
+            
+            # Display additional timing breakdown only if there was wait time
+            if total_wait_time > 0:
+                console.info(f"Timing breakdown", f"Total: {task_duration:.2f}s | Computational: {computational_time:.2f}s | Wait: {total_wait_time:.2f}s", task_id=task_id)
             
             if self.logger:
-                self.logger.complete_task(task_id, status)
+                self.logger.complete_task(task_id, status, computational_time)
                 
         except Exception as e:
             console.error("Task execution failed", str(e), task_id=task_id)
             task_memory.set(f"ERROR: {str(e)}")
             if self.logger:
-                self.logger.complete_task(task_id, "error")
+                self.logger.complete_task(task_id, "error", computational_time)
     
     async def handle_message(self, message: str, task_memory, task_id: str = "default") -> Dict[str, Any]:
         try:
@@ -146,78 +158,52 @@ class Orchestrator:
     
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
         # Limit memory context to save tokens
-        memory_content = task_memory.get() if task_memory else "No context"
-        if len(memory_content) > 200:
-            memory_content = memory_content[-200:]
+        memory_content = task_memory.get() if task_memory else ""
+        if len(memory_content) > 150:
+            memory_content = memory_content[-150:]
         available_tools = list(self.tools.tools.keys())
         
         analysis_prompt = f"""Task: "{message}"
-Context:{memory_content}
-Tools:{available_tools}
-
-OUTPUT ONLY VALID DSL TEXT:
+Context: {memory_content}
+Tools: {available_tools}
 
 DSL Commands:
-W N = wait N minutes
-F TOOL = fetch data from tool
-A TOOL = action/execute tool (just tool name, no extra parameters)
-IF CONDITION = conditional start
-ELSEIF CONDITION = else if condition
-ELSE = else clause
-ENDIF = end conditional
-WHILE CONDITION = loop start
-ENDWHILE = end loop
-STOP = stop execution and complete task
+W N=wait N min, F TOOL=fetch, A TOOL=action, IF/ELSE/ENDIF=conditional, WHILE/ENDWHILE=loop, STOP=complete
 
-CONDITION examples: from==support@google.com, contains subject:report, exists from:admin@google.com
+Examples:
 
-EXAMPLES:
-Simple task: "Check mail, if from support upload to drive, else slack"
+"Check mail for reports, if from admin create ticket, if from support update sheet"
 F gmail
-IF from==support@google.com
-  A drive
+IF contains "admin@google.com" in sender
+  A jira
+ELSEIF contains "support@google.com" in sender
+  A sheets
 ELSE
   A slack
 ENDIF
 
-Periodic task: "Check gmail every 15 minutes for reports"
+"Watch gmail every hour for a report then upload it to sheets"
 WHILE TRUE
   F gmail
-  IF contains subject:report
-    A jira
-  ENDIF
-  W 15
-ENDWHILE
-
-Until task: "Watch gmail until you get a report, then update spreadsheet"
-WHILE TRUE
-  F gmail
-  IF contains subject:report
+  IF contains "report" in subject
     A sheets
     STOP
   ENDIF
   W 60
 ENDWHILE
 
-Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "periodically", "until", "watch" keywords. Use only tool names (A jira, A slack) without extra parameters.
-"""
+Output DSL only:"""
         try:
             response, token_info = await llm_completion_async(
                 model=self.heavy_llm, 
                 prompt=analysis_prompt,
                 temperature=0.0,  # Maximum determinism
-                max_tokens=150,  
+                max_tokens=100,  # Reduced from 150
                 response_format=None  
             )
             
             if self.logger:
                 self.logger.add_tokens(task_id, token_info)
-            
-            # Print the raw LLM analysis output in multi-line format for readability
-            print(f"DSL Generated for Task {task_id}:")
-            for line in response.strip().split('\n'):
-                if line.strip():
-                    print(f"  {line}")
             
             # Parse text DSL instead of JSON
             flow = self._parse_text_dsl(response)
@@ -450,8 +436,17 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
                 elif command == "WAIT":  # Wait/Sleep
                     minutes = step[1] if len(step) > 1 else 1
                     seconds = minutes / 60  # Convert minutes to seconds
-                    console.info(f"Waiting", f"{minutes} minutes", task_id=task_id)
+                    console.info(f"Waiting", f"{minutes} minutes ({seconds}s)", task_id=task_id)
+                    
+                    # Track wait time for computational timing
+                    wait_start = time.time()
                     await asyncio.sleep(seconds)
+                    wait_duration = time.time() - wait_start
+                    
+                    # Add to total wait time for this task
+                    if task_id not in self.wait_times:
+                        self.wait_times[task_id] = 0.0
+                    self.wait_times[task_id] += wait_duration
                 
                 elif command == "STOP":  # Stop execution
                     console.info(f"STOP command reached", "Completing task", task_id=task_id)
@@ -555,9 +550,8 @@ Rules: Use simple flow for one-time tasks. Use WHILE only for "every X time", "p
             return False, condition_time
         
         # Use LLM for complex conditions
-        prompt = f"""Info: {last_result}
-
-Check if this condition is met: {condition}
+        prompt = f"""Data: {last_result}
+Condition: {condition}
 JSON: {{"met": true/false}}"""
         
         try:
@@ -583,21 +577,19 @@ JSON: {{"met": true/false}}"""
 
     async def llm_validate_completion(self, original_message: str, task_memory, task_id: str):
         # Limit memory for validation to save tokens
-        memory_content = task_memory.get() if task_memory else "No results"
-        if len(memory_content) > 300:
-            memory_content = memory_content[-300:]
+        memory_content = task_memory.get() if task_memory else ""
+        if len(memory_content) > 200:
+            memory_content = memory_content[-200:]
         
         validation_prompt = f"""Task: {original_message}
 Results: {memory_content}
 
-COMPLETED: provide final_message, leave continue_message empty
-INCOMPLETE: provide continue_message, leave final_message empty
-
+If DONE: final_message only. If NOT DONE: continue_message only.
 JSON: {{"final_message": "", "continue_message": ""}}"""
         
         try:
             response, token_info = await llm_completion_async(
-                model=self.light_llm, prompt=validation_prompt, temperature=0.0, max_tokens=80, response_format="json"
+                model=self.light_llm, prompt=validation_prompt, temperature=0.0, max_tokens=60, response_format="json"
             )
             
             if self.logger:

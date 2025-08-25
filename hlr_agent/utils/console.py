@@ -137,7 +137,7 @@ class ProfessionalConsole:
         """Print tool-related message"""
         self.print(LogLevel.TOOL, message, details, task_id)
     
-    def task_summary(self, task_id: str, duration: float, tokens: dict, status: str, final_message: str = None):
+    def task_summary(self, task_id: str, duration: float, tokens: dict, status: str, final_message: str = None, computational_time: float = None):
         """Print a formatted task summary"""
         status_color = Colors.GREEN if status == "completed" else Colors.YELLOW if status == "incomplete" else Colors.RED
         status_text = self._colorize(status.upper(), status_color + Colors.BOLD)
@@ -150,7 +150,12 @@ class ProfessionalConsole:
         
         tokens_info = f"Tokens: {total_tokens} (input: {input_tokens}, output: {output_tokens})"
         calls_info = f"LLM Calls: {llm_calls}"
-        timing_info = f"Duration: {duration:.2f}s"
+        
+        # Format timing information with both total and computational time
+        if computational_time is not None:
+            timing_info = f"Duration: {duration:.2f}s (compute: {computational_time:.2f}s)"
+        else:
+            timing_info = f"Duration: {duration:.2f}s"
         
         # Combine task status and final message in one line
         if final_message:

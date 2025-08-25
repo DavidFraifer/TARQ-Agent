@@ -35,7 +35,7 @@ class HLRLogger:
             self.active_tasks[task_id]["output_tokens"] += token_info.get("output_tokens", 0)
             self.active_tasks[task_id]["llm_calls"] += 1
     
-    def complete_task(self, task_id: str, status: str = "completed"):
+    def complete_task(self, task_id: str, status: str = "completed", computational_time: float = None):
         if task_id not in self.active_tasks:
             return
         
@@ -44,6 +44,10 @@ class HLRLogger:
         task_data["end_time"] = time.time()
         task_data["end_datetime"] = datetime.now().isoformat()
         task_data["duration_seconds"] = round(task_data["end_time"] - task_data["start_time"], 2)
+        
+        # Add computational time if provided
+        if computational_time is not None:
+            task_data["computation_seconds"] = round(computational_time, 2)
         
         # Write to log file
         self._write_log_entry(task_data)
@@ -60,6 +64,7 @@ class HLRLogger:
                 "start_time": task_data["start_datetime"],
                 "end_time": task_data["end_datetime"],
                 "duration_seconds": task_data["duration_seconds"],
+                "computation_seconds": task_data.get("computation_seconds", task_data["duration_seconds"]),
                 "iterations": task_data["iterations"],
                 "tokens_used": task_data["tokens_used"],
                 "input_tokens": task_data.get("input_tokens", 0),
