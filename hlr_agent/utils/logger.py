@@ -3,11 +3,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
+from .pricing import llm_pricing
 
 class HLRLogger:
     """Hierarchical LLM Router Logger - Simplified for new architecture"""
     
-    def __init__(self, log_file: str = "hlr_tasks.log"):
+    def __init__(self, log_file: str = "tasks.log"):
         self.log_file = Path(log_file)
         self.active_tasks: Dict[str, Dict[str, Any]] = {}
         
@@ -22,18 +23,40 @@ class HLRLogger:
             "input_tokens": 0,
             "output_tokens": 0,
             "llm_calls": 0,
+            "total_cost": 0.0,
+            "cost_breakdown": [],
             "status": "running",
             "is_periodic": is_periodic,
             "frequency_seconds": frequency_seconds,
             "has_completion_condition": has_completion_condition
         }
     
-    def add_tokens(self, task_id: str, token_info: dict):
+    def add_tokens(self, task_id: str, token_info: dict, model: str = None):
         if task_id in self.active_tasks:
-            self.active_tasks[task_id]["tokens_used"] += token_info.get("total_tokens", 0)
-            self.active_tasks[task_id]["input_tokens"] += token_info.get("input_tokens", 0)
-            self.active_tasks[task_id]["output_tokens"] += token_info.get("output_tokens", 0)
+            input_tokens = token_info.get("input_tokens", 0)
+            output_tokens = token_info.get("output_tokens", 0)
+            total_tokens = token_info.get("total_tokens", 0)
+            
+            # Update token counts
+            self.active_tasks[task_id]["tokens_used"] += total_tokens
+            self.active_tasks[task_id]["input_tokens"] += input_tokens
+            self.active_tasks[task_id]["output_tokens"] += output_tokens
             self.active_tasks[task_id]["llm_calls"] += 1
+            
+            # Calculate cost if model is provided
+            if model:
+                cost, cost_breakdown = llm_pricing.calculate_cost(model, input_tokens, output_tokens)
+                self.active_tasks[task_id]["total_cost"] += cost
+                
+                # Add to cost breakdown for detailed tracking
+                cost_entry = {
+                    "model": model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": cost,
+                    "timestamp": datetime.now().isoformat()
+                }
+                self.active_tasks[task_id]["cost_breakdown"].append(cost_entry)
     
     def complete_task(self, task_id: str, status: str = "completed", computational_time: float = None):
         if task_id not in self.active_tasks:
@@ -70,6 +93,8 @@ class HLRLogger:
                 "input_tokens": task_data.get("input_tokens", 0),
                 "output_tokens": task_data.get("output_tokens", 0),
                 "llm_calls": task_data.get("llm_calls", 0),
+                "total_cost_usd": round(task_data.get("total_cost", 0.0), 6),
+                "cost_breakdown": task_data.get("cost_breakdown", []),
                 "status": task_data["status"],
                 "is_periodic": task_data.get("is_periodic", False),
                 "frequency_seconds": task_data.get("frequency_seconds", 0),

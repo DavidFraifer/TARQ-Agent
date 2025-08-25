@@ -147,9 +147,16 @@ class ProfessionalConsole:
         input_tokens = tokens.get('input_tokens', 0)
         output_tokens = tokens.get('output_tokens', 0)
         llm_calls = tokens.get('llm_calls', 0)
+        total_cost = tokens.get('total_cost', 0.0)
         
         tokens_info = f"Tokens: {total_tokens} (input: {input_tokens}, output: {output_tokens})"
         calls_info = f"LLM Calls: {llm_calls}"
+        
+        # Format cost information
+        if total_cost > 0:
+            cost_info = f"Cost: ${total_cost:.5f}"
+        else:
+            cost_info = f"Cost: $0.00000"
         
         # Format timing information with both total and computational time
         if computational_time is not None:
@@ -168,7 +175,7 @@ class ProfessionalConsole:
         else:
             self.task(f"Task {task_id} {status_text}")
         
-        self.info(timing_info, f"{tokens_info} | {calls_info}")
+        self.info(timing_info, f"{tokens_info} | {calls_info} | {cost_info}")
 
 # Global console instance
 console = ProfessionalConsole()

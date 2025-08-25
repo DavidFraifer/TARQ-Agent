@@ -110,7 +110,8 @@ class Orchestrator:
                     'tokens_used': task_data.get('tokens_used', 0),
                     'input_tokens': task_data.get('input_tokens', 0),
                     'output_tokens': task_data.get('output_tokens', 0),
-                    'llm_calls': task_data.get('llm_calls', 0)
+                    'llm_calls': task_data.get('llm_calls', 0),
+                    'total_cost': task_data.get('total_cost', 0.0)
                 }
             
             status = "completed" if result.get("completed", True) else "incomplete"
@@ -203,7 +204,7 @@ Output DSL only:"""
             )
             
             if self.logger:
-                self.logger.add_tokens(task_id, token_info)
+                self.logger.add_tokens(task_id, token_info, self.heavy_llm)
             
             # Parse text DSL instead of JSON
             flow = self._parse_text_dsl(response)
@@ -564,7 +565,7 @@ JSON: {{"met": true/false}}"""
             )
             
             if self.logger:
-                self.logger.add_tokens(task_id, token_info)
+                self.logger.add_tokens(task_id, token_info, self.light_llm)
             
             result = json.loads(response.strip())
             is_met = result.get("met", False)
@@ -593,7 +594,7 @@ JSON: {{"final_message": "", "continue_message": ""}}"""
             )
             
             if self.logger:
-                self.logger.add_tokens(task_id, token_info)
+                self.logger.add_tokens(task_id, token_info, self.light_llm)
             
             result = json.loads(response.strip())
             final_message = result.get("final_message", "").strip()
