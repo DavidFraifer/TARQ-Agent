@@ -16,6 +16,8 @@ dependencies = [
     "openai",
     "google-genai"
 ]
+[tool.poetry.dependencies]
+python = ">=3.9,<3.14"
 
 [project.urls]
 "Homepage" = "https://github.com/DavidFraifer/HLR"
