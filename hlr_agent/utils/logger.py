@@ -12,9 +12,10 @@ class HLRLogger:
         self.log_file = Path(log_file)
         self.active_tasks: Dict[str, Dict[str, Any]] = {}
         
-    def start_task(self, task_id: str, message: str, is_periodic: bool = False, frequency_seconds: int = 0, has_completion_condition: bool = False):
+    def start_task(self, task_id: str, message: str, agent_id: str = "unknown", is_periodic: bool = False, frequency_seconds: int = 0, has_completion_condition: bool = False):
         self.active_tasks[task_id] = {
             "task_id": task_id,
+            "agent_id": agent_id,
             "message": message[:100] + "..." if len(message) > 100 else message,
             "start_time": time.time(),
             "start_datetime": datetime.now().isoformat(),

@@ -11,24 +11,54 @@ import json
 import threading
 import queue
 import time
+import uuid
 
 class Orchestrator:
-    def __init__(self, logger: Optional[HLRLogger] = None, light_llm: str = "gemini-2.5-flash-lite", heavy_llm: str = "gemini-2.5-flash-lite"):
+    def __init__(self, logger: Optional[HLRLogger] = None, light_llm: str = "gemini-2.5-flash-lite", heavy_llm: str = "gemini-2.5-flash-lite", agent_id: str = "unknown"):
         self.logger = logger
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
+        self.agent_id = agent_id
         self.tools = ToolContainer()
         self.message_queue = queue.Queue()
         self.scheduler_thread = None
         self.running = False
-        self.agent_memory = AgentMemory(f"Orchestrator-Agent-{id(self)}", max_tasks=50)
-        
+        self.agent_memory = AgentMemory(f"Orchestrator-Agent-{agent_id}", max_tasks=50)
+        # Track redirects decided by delegate LLM: task_id -> info
+        self._redirects = {}
+
         # Add internal tools
         for tool_name, tool_func in internal_tools.items():
             self.tools.add_tool(tool_name, tool_func)
         
     def add_tool(self, name: str, func):
         self.tools.add_tool(name, func)
+
+    def _normalize_llm_result(self, llm_result):
+        """Normalize various possible return shapes from llm_completion_async.
+
+        Returns: (response_str, normalized_token_info_dict)
+        """
+        # Default empty values
+        response = ""
+        token_info = {}
+
+        if isinstance(llm_result, tuple) and len(llm_result) >= 1:
+            response = llm_result[0] or ""
+            token_info = llm_result[1] if len(llm_result) > 1 and isinstance(llm_result[1], dict) else {}
+        else:
+            response = llm_result if llm_result is not None else ""
+            token_info = {}
+
+        token_info = token_info or {}
+        norm_token_info = {
+            'input_tokens': token_info.get('input_tokens', token_info.get('input', 0)),
+            'output_tokens': token_info.get('output_tokens', token_info.get('output', 0)),
+            'total_tokens': token_info.get('total_tokens', token_info.get('tokens', 0)),
+            'llm_calls': token_info.get('llm_calls', token_info.get('calls', 1))
+        }
+
+        return response, norm_token_info
     
     def set_logger(self, logger):
         self.logger = logger
@@ -78,22 +108,71 @@ class Orchestrator:
     
     async def _process_message_async(self, message):
         start_time = time.time()
-        task_id = f"{int(start_time * 1000) % 100000000:08d}"
+        task_id = f"task-{str(uuid.uuid4())[:8]}"
         task_memory = self.agent_memory.create_task_memory(f"Task-{task_id}")
-        
+        # Detect forwarded/delegated envelope messages and extract payload
+        is_forwarded = False
+        origin_agent = None
+        origin_task = None
+        payload = message
+        if isinstance(message, dict) and message.get('_forwarded'):
+            is_forwarded = True
+            origin_agent = message.get('origin_agent')
+            origin_task = message.get('origin_task_id')
+            payload = message.get('payload', '')
+
         # Initialize wait time tracking
         self.wait_times = {}
         self.wait_times[task_id] = 0.0
-        
+
         # Truncate message for logging display
-        display_message = message[:60] + "..." if len(message) > 60 else message
-        console.task(f"Task {task_id} ADDED - {display_message}", task_id=task_id)
+        display_message = payload[:60] + "..." if isinstance(payload, str) and len(payload) > 60 else payload
+        console.task(f"Task {task_id} ADDED [Agent: {self.agent_id}] - {display_message}", task_id=task_id)
         
         if self.logger:
-            self.logger.start_task(task_id, message)
-        
+            self.logger.start_task(task_id, message, self.agent_id)
+
+        # If this orchestrator is part of a team and the task was NOT forwarded, start the delegation worker in background
+        delegate_task = None
         try:
-            result = await self.handle_message(message, task_memory, task_id)
+            if hasattr(self, 'team') and getattr(self, 'team') and not is_forwarded:
+                # run delegate check in parallel; it may forward the task to another agent
+                delegate_task = asyncio.create_task(self._delegate_worker(payload, task_id))
+        except Exception:
+            # Non-fatal: delegation is best-effort
+            delegate_task = None
+
+        try:
+            # Step 1: Initial Analysis with timing (pre-parse the DSL)
+            analysis_start = time.time()
+            analysis = await self.llm_analyze_task(payload, task_memory, task_id)
+            analysis_time = time.time() - analysis_start
+
+            # If a delegate redirected this task while analysis was running, stop here and suppress analysis output
+            # Wait for delegate to finish if it is still running to ensure we honor its decision
+            if delegate_task is not None and not delegate_task.done():
+                try:
+                    await delegate_task
+                except Exception:
+                    # delegate failure is non-fatal
+                    pass
+
+            if task_id in getattr(self, '_redirects', {}):
+                info = self._redirects.get(task_id, {})
+                target = info.get('target_name', 'unknown')
+                console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", task_id=task_id)
+                result = {"completed": False, "final_message": f"Task redirected to {target}"}
+            else:
+                # Print timing info
+                console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
+
+                # Execute the DSL flow
+                flow = analysis.get("flow", [])
+                if flow:
+                    result = await self._execute_dsl_flow(flow, task_memory, task_id, payload)
+                else:
+                    # Fallback: no flow provided, return simple completion
+                    result = {"completed": True, "final_message": "Task completed successfully"}
             
             # Always use actual elapsed time for consistency
             task_duration = time.time() - start_time
@@ -140,7 +219,14 @@ class Orchestrator:
             analysis_start = time.time()
             analysis = await self.llm_analyze_task(message, task_memory, task_id)
             analysis_time = time.time() - analysis_start
-            
+            # If a delegate redirected this task while analysis was running, stop here and suppress analysis output
+            if task_id in getattr(self, '_redirects', {}):
+                info = self._redirects.get(task_id, {})
+                target = info.get('target_name', 'unknown')
+                # Minimal log: delegate already redirected the task
+                console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", task_id=task_id)
+                return {"completed": False, "final_message": f"Task redirected to {target}"}
+
             # Print timing info
             console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
             
@@ -160,61 +246,67 @@ class Orchestrator:
     
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
         # Limit memory context to save tokens
-        memory_content = task_memory.get() if task_memory else ""
-        if len(memory_content) > 150:
-            memory_content = memory_content[-150:]
-        available_tools = list(self.tools.tools.keys())
-        
-        analysis_prompt = f"""Task: "{message}"
+                memory_content = task_memory.get() if task_memory else ""
+                if len(memory_content) > 150:
+                        memory_content = memory_content[-150:]
+
+                available_tools = list(self.tools.tools.keys())
+
+                analysis_prompt = f"""Task: "{message}"
 Context: {memory_content}
 Tools: {available_tools}
 
 DSL Commands:
-W N=wait N min, F TOOL=fetch, A TOOL=action, IF/ELSE/ENDIF=conditional, WHILE/ENDWHILE=loop, STOP=complete
+W N=wait N min, F TOOL=fetch (before IF/WHILE), A TOOL=action, IF (condition)/ELSE/ENDIF=conditional, WHILE/ENDWHILE=loop, STOP=complete
 
 Examples:
+"Look at 'Annual Report' in sheets and send an email"
+A sheets
+A gmail
 
-"Check mail for reports, if from admin create ticket, if from support update sheet"
+"Check mail for reports, if from admin create ticket, if from support update sheet, else post in slack"
 F gmail
-IF contains "admin@google.com" in sender
-  A jira
-ELSEIF contains "support@google.com" in sender
-  A sheets
+IF (the sender is "admin@google.com")
+    A jira
+ELSEIF (the sender is "support@google.com")
+    A sheets
 ELSE
-  A slack
+    A slack
 ENDIF
 
 "Watch gmail every hour for a report then upload it to sheets"
 WHILE TRUE
-  F gmail
-  IF contains "report" in subject
-    A sheets
-    STOP
-  ENDIF
-  W 60
+    F gmail
+    IF (the subject contains "report")
+        A sheets
+        STOP
+    ENDIF
+    W 60
 ENDWHILE
 
 Output DSL only:"""
-        try:
-            response, token_info = await llm_completion_async(
-                model=self.heavy_llm, 
-                prompt=analysis_prompt,
-                temperature=0.0,  # Maximum determinism
-                max_tokens=100,  # Reduced from 150
-                response_format=None  
-            )
-            
-            if self.logger:
-                self.logger.add_tokens(task_id, token_info, self.heavy_llm)
-            
-            # Parse text DSL instead of JSON
-            flow = self._parse_text_dsl(response)
-            result = {"flow": flow}
-            
-            return result
-            
-        except Exception as e:
-            return {"flow": []}
+                try:
+                        llm_result = await llm_completion_async(
+                                model=self.heavy_llm,
+                                prompt=analysis_prompt,
+                                temperature=0.0,  # Maximum determinism
+                                max_tokens=100,  # Reduced from 150
+                                response_format=None,
+                        )
+
+                        response, norm_token_info = self._normalize_llm_result(llm_result)
+
+                        if self.logger:
+                                try:
+                                        self.logger.add_tokens(task_id, norm_token_info, self.heavy_llm)
+                                except Exception:
+                                        pass
+
+                        flow = self._parse_text_dsl(response)
+                        return {"flow": flow}
+
+                except Exception:
+                        return {"flow": []}
 
     def _parse_text_dsl(self, text: str) -> List:
         """Parse text DSL into array format for execution"""
@@ -232,9 +324,12 @@ Output DSL only:"""
                 flow.append(simple)
                 continue
                     
-            if line.strip().startswith('IF '):
-                # Conditional: IF condition -> parse block
-                condition = line.strip()[3:].strip()
+            if line.strip().upper().startswith('IF'):
+                # Conditional: IF condition or IF (condition) -> parse block
+                condition = line.strip()[2:].strip()
+                # Remove surrounding parentheses if present
+                if condition.startswith('(') and condition.endswith(')'):
+                    condition = condition[1:-1].strip()
                 then_block, else_block, i = self._parse_conditional_block(lines, i, 2)
                 flow.append(["IF", condition, then_block, else_block])
                 
@@ -277,11 +372,13 @@ Output DSL only:"""
             stripped = line.strip()
             if stripped == 'ENDIF':
                 break
-            elif stripped.startswith('ELSEIF ') or stripped == 'ELSE':
+            elif stripped.upper().startswith('ELSEIF') or stripped == 'ELSE':
                 current_block = else_block
-                if stripped.startswith('ELSEIF '):
+                if stripped.upper().startswith('ELSEIF'):
                     # Convert ELSEIF to nested IF in else block
-                    condition = stripped[7:].strip()
+                    condition = stripped[6:].strip()
+                    if condition.startswith('(') and condition.endswith(')'):
+                        condition = condition[1:-1].strip()
                     nested_then, nested_else, i = self._parse_conditional_block(lines, i, expected_indent)
                     else_block.append(["IF", condition, nested_then, nested_else])
                     break
@@ -290,9 +387,11 @@ Output DSL only:"""
                 # Indented line - part of current block
                 line_content = line[expected_indent:]  # Remove expected indentation
                 
-                if line_content.startswith('IF '):
+                if line_content.upper().startswith('IF'):
                     # Nested conditional - use deeper indentation
-                    condition = line_content[3:].strip()
+                    condition = line_content[2:].strip()
+                    if condition.startswith('(') and condition.endswith(')'):
+                        condition = condition[1:-1].strip()
                     nested_then, nested_else, new_i = self._parse_conditional_block(lines, i, expected_indent + 2)
                     current_block.append(["IF", condition, nested_then, nested_else])
                     i = new_i  # Update index to skip processed lines
@@ -346,6 +445,12 @@ Output DSL only:"""
     async def _execute_dsl_flow(self, flow: List, task_memory, task_id: str, original_message: str, parent_fetch_result: str = "", skip_validation: bool = False) -> Dict[str, Any]:
         """Execute the new DSL flow structure"""
         execution_start = time.time()
+        # If a delegate already redirected this task, stop executing here
+        if task_id in getattr(self, '_redirects', {}):
+            info = self._redirects.get(task_id, {})
+            target = info.get('target_name', 'unknown')
+            console.info(f"Task redirected", f"Forwarded to {target}", task_id=task_id)
+            return {"completed": False, "final_message": f"Task redirected to {target}"}
         last_fetch_result = parent_fetch_result
         has_infinite_loop = self._contains_infinite_loop(flow) and not skip_validation
         
@@ -542,20 +647,24 @@ Condition: {condition}
 JSON: {{"met": true/false}}"""
         
         try:
-            response, token_info = await llm_completion_async(
+            llm_result = await llm_completion_async(
                 model=self.light_llm,
                 prompt=prompt,
                 temperature=0.0,
                 max_tokens=25,
                 response_format="json"
             )
-            
+
+            response, norm_token_info = self._normalize_llm_result(llm_result)
             if self.logger:
-                self.logger.add_tokens(task_id, token_info, self.light_llm)
-            
+                try:
+                    self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
+                except Exception:
+                    pass
+
             result = json.loads(response.strip())
             is_met = result.get("met", False)
-            
+
         except Exception:
             is_met = False
             
@@ -575,13 +684,17 @@ If DONE: final_message only. If NOT DONE: continue_message only.
 JSON: {{"final_message": "", "continue_message": ""}}"""
         
         try:
-            response, token_info = await llm_completion_async(
+            llm_result = await llm_completion_async(
                 model=self.light_llm, prompt=validation_prompt, temperature=0.0, max_tokens=60, response_format="json"
             )
-            
+
+            response, norm_token_info = self._normalize_llm_result(llm_result)
             if self.logger:
-                self.logger.add_tokens(task_id, token_info, self.light_llm)
-            
+                try:
+                    self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
+                except Exception:
+                    pass
+
             result = json.loads(response.strip())
             final_message = result.get("final_message", "").strip()
             continue_message = result.get("continue_message", "").strip()
@@ -597,3 +710,139 @@ JSON: {{"final_message": "", "continue_message": ""}}"""
             
         except Exception:
             return {"completed": True, "final_message": "Task execution completed successfully"}
+
+    async def llm_delegate(self, message: str, task_id: str) -> str:
+        """Fast delegate LLM: returns a single agent name (exact) or 'NONE' if no delegation."""
+        # If no team attached, never delegate
+        if not hasattr(self, 'team') or not getattr(self, 'team'):
+            return 'NONE'
+        # Build a compact numbered team description using available tools for each agent.
+        # Team stores agents as a dict of name -> Agent
+        member_entries = []
+        index_to_name = []
+        idx = 1
+        for name, a in getattr(self.team, 'agents', {}).items():
+            tools_obj = getattr(a, 'tools', None) or getattr(getattr(a, 'orchestrator', None), 'tools', None)
+            tool_names = []
+            try:
+                if isinstance(tools_obj, (list, tuple, set)):
+                    tool_names = [str(t) for t in tools_obj]
+                elif hasattr(tools_obj, 'tools') and isinstance(getattr(tools_obj, 'tools'), dict):
+                    tool_names = list(getattr(tools_obj, 'tools').keys())
+                elif isinstance(tools_obj, dict):
+                    tool_names = list(tools_obj.keys())
+            except Exception:
+                tool_names = []
+
+            if tool_names:
+                entry = f"{idx}.{name} ({', '.join(tool_names)})"
+            else:
+                entry = f"{idx}.{name}"
+            member_entries.append(entry)
+            index_to_name.append(name)
+            idx += 1
+        member_list = " and ".join(member_entries)
+
+
+        prompt = f"""You are a fast router. Task: {message}
+        Team agents: {member_list}
+        Decide which agent is most suitable for this task based on the tools each agent has. Output only a single number: the index of the chosen agent (e.g. 1 or 2). If this agent (YOU) should handle it locally, output 0. Do not output names, IDs, punctuation or any extra text.
+
+        Example:
+        Task: "Post the latest admin email to Slack"
+        Team agents: 1.backend-dev (jira, slack) and 2.qa-engineer (gmail, slack)
+        Output: 2
+
+        """
+        try:
+            llm_result = await llm_completion_async(model=self.light_llm, prompt=prompt, temperature=0.0, max_tokens=6)
+            response, norm_token_info = self._normalize_llm_result(llm_result)
+            if self.logger:
+                try:
+                    self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
+                except Exception:
+                    pass
+            raw = response.strip().splitlines()[0].strip() if response else ''
+            try:
+                console.debug("Delegate raw response", raw, task_id=task_id)
+            except Exception:
+                pass
+
+            # Expect a single number. If 0 -> handle locally (NONE). If N -> map to Nth agent.
+            num = None
+            try:
+                num = int(raw)
+            except Exception:
+                # Not a number -> treat as NONE (do not delegate)
+                return 'NONE'
+
+            if num == 0:
+                return 'NONE'
+            if 1 <= num <= len(index_to_name):
+                return index_to_name[num-1]
+            return 'NONE'
+        except Exception:
+            return 'NONE'
+
+    async def _delegate_worker(self, message: str, task_id: str):
+        """Background worker that asks llm_delegate and forwards task to selected agent by name."""
+        try:
+            choice = await self.llm_delegate(message, task_id)
+            # Respect the model decision: if it returned NONE, do not fallback to heuristics
+            if not choice or choice == 'NONE':
+                return
+
+            # Find agent by name in the team's agents dict
+            team = getattr(self, 'team', None)
+            if not team:
+                return
+
+            target_agent = None
+            # team.agents is a dict: name -> Agent
+            for name, a in getattr(team, 'agents', {}).items():
+                if name == choice or name.lower() == choice.lower() or a.agent_id == choice:
+                    target_agent = a
+                    target_name = name
+                    break
+
+            if not target_agent:
+                console.debug("Delegation: target not found", choice, task_id=task_id)
+                return
+
+            # If the chosen target is this same agent, ignore the delegation to avoid self-redirects
+            try:
+                if getattr(target_agent, 'agent_id', None) == getattr(self, 'agent_id', None):
+                    console.debug("Delegation: chosen target is self; ignoring redirect", target_name, task_id=task_id)
+                    return
+            except Exception:
+                pass
+
+            # Mark redirect so local execution stops
+
+            self._redirects[task_id] = {'target_name': target_name}
+
+            console.task(f"Task {task_id} REDIRECTED [Agent: {self.agent_id}] -> {target_name}", task_id=task_id)
+
+            # Ensure target agent is running (best-effort)
+            try:
+                if hasattr(target_agent, 'start'):
+                    target_agent.start()
+            except Exception:
+                pass
+
+            # Forward message to target agent's receive_message or run
+            try:
+                # Send a small envelope so the receiving agent knows this was delegated and from whom
+                envelope = {'_forwarded': True, 'origin_agent': self.agent_id, 'origin_task_id': task_id, 'payload': message}
+                if hasattr(target_agent, 'receive_message'):
+                    target_agent.receive_message(envelope)
+                elif hasattr(target_agent, 'run'):
+                    # run may be a method to enqueue/start processing
+                    target_agent.run(envelope)
+                else:
+                    console.debug("Delegation: target has no enqueue method", target_agent.agent_id, task_id=task_id)
+            except Exception as e:
+                console.error("Delegation forward failed", str(e), task_id=task_id)
+
+        except Exception:
+            pass
