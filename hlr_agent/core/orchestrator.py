@@ -103,16 +103,14 @@ class Orchestrator:
             computational_time = task_duration - total_wait_time
             
             # Get token information for summary
-            token_info = {}
-            if self.logger and task_id in self.logger.active_tasks:
-                task_data = self.logger.active_tasks[task_id]
-                token_info = {
-                    'tokens_used': task_data.get('tokens_used', 0),
-                    'input_tokens': task_data.get('input_tokens', 0),
-                    'output_tokens': task_data.get('output_tokens', 0),
-                    'llm_calls': task_data.get('llm_calls', 0),
-                    'total_cost': task_data.get('total_cost', 0.0)
-                }
+            task_data = self.logger.active_tasks.get(task_id, {}) if self.logger else {}
+            token_info = {
+                'tokens_used': task_data.get('tokens_used', 0),
+                'input_tokens': task_data.get('input_tokens', 0),
+                'output_tokens': task_data.get('output_tokens', 0),
+                'llm_calls': task_data.get('llm_calls', 0),
+                'total_cost': task_data.get('total_cost', 0.0)
+            }
             
             status = "completed" if result.get("completed", True) else "incomplete"
             final_message = result.get('final_message', "Task execution finished" if status == "completed" else "Task incomplete")
@@ -126,12 +124,15 @@ class Orchestrator:
             
             if self.logger:
                 self.logger.complete_task(task_id, status, computational_time)
-                
         except Exception as e:
             console.error("Task execution failed", str(e), task_id=task_id)
             task_memory.set(f"ERROR: {str(e)}")
             if self.logger:
-                self.logger.complete_task(task_id, "error", computational_time)
+                # Ensure computational_time is defined on error path
+                elapsed = time.time() - start_time
+                total_wait_time = self.wait_times.get(task_id, 0.0)
+                comp_time = elapsed - total_wait_time
+                self.logger.complete_task(task_id, "error", comp_time)
     
     async def handle_message(self, message: str, task_memory, task_id: str = "default") -> Dict[str, Any]:
         try:
@@ -225,27 +226,13 @@ Output DSL only:"""
             line = lines[i]
             i += 1
             
-            if line.strip().startswith('W '):
-                # Wait command: W 15 -> ["WAIT", 15]
-                minutes = int(line.strip().split()[1])
-                flow.append(["WAIT", minutes])
-                
-            elif line.strip().startswith('F '):
-                # Fetch command: F gmail -> ["F", "gmail"]
-                tool = line.strip().split()[1]
-                flow.append(["F", tool])
-                
-            elif line.strip().startswith('A '):
-                # Action command: A jira -> ["A", "jira"]
-                parts = line.strip().split()
-                tool = parts[1]
-                flow.append(["A", tool])
-                
-            elif line.strip() == 'STOP':
-                # Stop command: STOP -> ["STOP"]
-                flow.append(["STOP"])
+            # Basic commands
+            simple = self._parse_simple_command(line)
+            if simple:
+                flow.append(simple)
+                continue
                     
-            elif line.strip().startswith('IF '):
+            if line.strip().startswith('IF '):
                 # Conditional: IF condition -> parse block
                 condition = line.strip()[3:].strip()
                 then_block, else_block, i = self._parse_conditional_block(lines, i, 2)
@@ -258,6 +245,23 @@ Output DSL only:"""
                 flow.append(["WHILE", condition, body_block])
         
         return flow
+
+    def _parse_simple_command(self, line: str):
+        """Parse a single-line basic command (A/F/W/STOP). Returns list or None."""
+        s = line.strip()
+        if s.startswith('W '):
+            minutes = int(s.split()[1])
+            return ["WAIT", minutes]
+        if s.startswith('F '):
+            tool = s.split()[1]
+            return ["F", tool]
+        if s.startswith('A '):
+            parts = s.split()
+            tool = parts[1]
+            return ["A", tool]
+        if s == 'STOP':
+            return ["STOP"]
+        return None
     
     def _parse_conditional_block(self, lines: List[str], start_idx: int, expected_indent: int = 2):
         """Parse IF/ELSEIF/ELSE/ENDIF block"""
@@ -267,16 +271,17 @@ Output DSL only:"""
         i = start_idx
         
         while i < len(lines):
-            line = lines[i]  # Don't strip here - we need to check indentation
+            line = lines[i]  # Don't strip here - we need indentation
             i += 1
             
-            if line.strip() == 'ENDIF':
+            stripped = line.strip()
+            if stripped == 'ENDIF':
                 break
-            elif line.strip().startswith('ELSEIF ') or line.strip() == 'ELSE':
+            elif stripped.startswith('ELSEIF ') or stripped == 'ELSE':
                 current_block = else_block
-                if line.strip().startswith('ELSEIF '):
+                if stripped.startswith('ELSEIF '):
                     # Convert ELSEIF to nested IF in else block
-                    condition = line.strip()[7:].strip()
+                    condition = stripped[7:].strip()
                     nested_then, nested_else, i = self._parse_conditional_block(lines, i, expected_indent)
                     else_block.append(["IF", condition, nested_then, nested_else])
                     break
@@ -291,19 +296,10 @@ Output DSL only:"""
                     nested_then, nested_else, new_i = self._parse_conditional_block(lines, i, expected_indent + 2)
                     current_block.append(["IF", condition, nested_then, nested_else])
                     i = new_i  # Update index to skip processed lines
-                elif line_content.startswith('A '):
-                    # Simple parsing - just take tool name
-                    parts = line_content.split()
-                    tool = parts[1]
-                    current_block.append(["A", tool])
-                elif line_content.startswith('F '):
-                    tool = line_content.split()[1]
-                    current_block.append(["F", tool])
-                elif line_content.startswith('W '):
-                    minutes = int(line_content.split()[1])
-                    current_block.append(["WAIT", minutes])
-                elif line_content.strip() == 'STOP':
-                    current_block.append(["STOP"])
+                else:
+                    cmd = self._parse_simple_command(line_content)
+                    if cmd:
+                        current_block.append(cmd)
         
         return then_block, else_block, i
     
@@ -313,7 +309,7 @@ Output DSL only:"""
         i = start_idx
         
         while i < len(lines):
-            line = lines[i]  # Don't strip - need to check indentation
+            line = lines[i]  # Don't strip - need indentation
             i += 1
             
             if line.strip() == 'ENDWHILE':
@@ -321,24 +317,16 @@ Output DSL only:"""
             elif line.startswith('  '):
                 # Indented line - part of while body
                 line_content = line[2:]  # Remove indentation
-                if line_content.startswith('A '):
-                    parts = line_content.split()
-                    tool = parts[1]
-                    body_block.append(["A", tool])
-                elif line_content.startswith('F '):
-                    tool = line_content.split()[1]
-                    body_block.append(["F", tool])
-                elif line_content.startswith('W '):
-                    minutes = int(line_content.split()[1])
-                    body_block.append(["WAIT", minutes])
-                elif line_content.strip() == 'STOP':
-                    body_block.append(["STOP"])
-                elif line_content.startswith('IF '):
+                if line_content.startswith('IF '):
                     # Nested conditional in while loop
                     condition = line_content[3:].strip()
                     then_block, else_block, i = self._parse_conditional_block(lines, i, 4)
                     body_block.append(["IF", condition, then_block, else_block])
                     i -= 1  # Adjust for the increment at loop start
+                else:
+                    cmd = self._parse_simple_command(line_content)
+                    if cmd:
+                        body_block.append(cmd)
         
         return body_block, i
 
@@ -431,8 +419,6 @@ Output DSL only:"""
                             return sub_result
                         
                         iteration += 1
-                
-                # Remove unused FOR loop command - not in DSL spec
                 
                 elif command == "WAIT":  # Wait/Sleep
                     minutes = step[1] if len(step) > 1 else 1
