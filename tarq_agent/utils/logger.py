@@ -5,9 +5,8 @@ from pathlib import Path
 from typing import Dict, Any
 from .pricing import llm_pricing
 
-class HLRLogger:
-    """Hierarchical LLM Router Logger - Simplified for new architecture"""
-    
+class TARQLogger:
+
     def __init__(self, log_file: str = "tasks.log"):
         self.log_file = Path(log_file)
         self.active_tasks: Dict[str, Dict[str, Any]] = {}

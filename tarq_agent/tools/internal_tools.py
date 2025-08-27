@@ -33,7 +33,7 @@ def _create_tool_func(name: str, action: str):
             else:
                 print(f"[Drive] {message}")
         elif name == "jira":
-            ticket_id = f"HLR-{random.randint(1000, 9999)}"
+            ticket_id = f"TARQ-{random.randint(1000, 9999)}"
             message = f"Jira ticket created - {ticket_id}: Task tracking ticket generated"
             if console:
                 console.tool(f"[JIRA] {message}", task_id=task_id)

@@ -2,7 +2,7 @@ from typing import List, Union, Optional
 from .tools import Tool
 from .core.orchestrator import Orchestrator
 from .config import configure_api_keys
-from .utils.logger import HLRLogger
+from .utils.logger import TARQLogger
 from .utils.console import console
 import uuid
 import time
@@ -24,7 +24,7 @@ class Agent:
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
     # role removed; tools describe agent capabilities
-        self.logger = HLRLogger() if enable_logging else None
+        self.logger = TARQLogger() if enable_logging else None
         self.orchestrator = Orchestrator(logger=self.logger, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=self.agent_id)
         self.running = False
 

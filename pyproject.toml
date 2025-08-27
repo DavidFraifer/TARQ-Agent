@@ -3,9 +3,9 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hlr_agent"
+name = "tarq_agent"
 version = "0.3.0"
-description = "A library for managing nodes and agent workflows"
+description = "Temporal Async Reasoning & Queueing"
 authors = [
     { name = "David Serrano", email = "davidsd.2704@gmail.com" }
 ]
@@ -20,4 +20,4 @@ dependencies = [
 python = ">=3.9,<3.14"
 
 [project.urls]
-"Homepage" = "https://github.com/DavidFraifer/HLR"
+"Homepage" = "https://github.com/DavidFraifer/TARQ-Agent"

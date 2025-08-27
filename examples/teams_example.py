@@ -1,6 +1,6 @@
 
 
-from hlr_agent import Agent, AgentTeams
+from tarq_agent import Agent, AgentTeams
 import time
 # Create teams (one custom ID, one auto-generated)
 auto_team = AgentTeams(name="Auto Team")

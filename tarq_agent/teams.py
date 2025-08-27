@@ -159,11 +159,11 @@ class AgentTeams:
         return self.__str__()
 
     def _ensure_agent_has_logger(self, agent: Agent) -> None:
-        """Attach a default HLRLogger to the agent and its orchestrator if missing."""
-        from .utils.logger import HLRLogger
+        """Attach a default TARQLogger to the agent and its orchestrator if missing."""
+        from .utils.logger import TARQLogger
 
         if getattr(agent, 'logger', None) is None:
-            agent.logger = HLRLogger()
+            agent.logger = TARQLogger()
             try:
                 agent.orchestrator.set_logger(agent.logger)
             except Exception:

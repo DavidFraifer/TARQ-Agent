@@ -1,10 +1,7 @@
-"""
-Simple interactive chat example with HLR Agent.
-Type messages and see the agent process them in real-time.
-"""
+
 
 import time
-from hlr_agent import Agent
+from tarq_agent import Agent
 
 
 agent = Agent(

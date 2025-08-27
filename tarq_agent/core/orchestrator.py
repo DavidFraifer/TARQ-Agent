@@ -1,5 +1,4 @@
-# orchestrator.py - HLR Task Orchestrator
-from ..utils.logger import HLRLogger
+from ..utils.logger import TARQLogger
 from ..utils.console import console
 from ..tools.tool import ToolContainer
 from ..tools.internal_tools import internal_tools
@@ -14,7 +13,7 @@ import time
 import uuid
 
 class Orchestrator:
-    def __init__(self, logger: Optional[HLRLogger] = None, light_llm: str = "gemini-2.5-flash-lite", heavy_llm: str = "gemini-2.5-flash-lite", agent_id: str = "unknown"):
+    def __init__(self, logger: Optional[TARQLogger] = None, light_llm: str = "gemini-2.5-flash-lite", heavy_llm: str = "gemini-2.5-flash-lite", agent_id: str = "unknown"):
         self.logger = logger
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
@@ -24,7 +23,6 @@ class Orchestrator:
         self.scheduler_thread = None
         self.running = False
         self.agent_memory = AgentMemory(f"Orchestrator-Agent-{agent_id}", max_tasks=50)
-        # Track redirects decided by delegate LLM: task_id -> info
         self._redirects = {}
 
         # Add internal tools

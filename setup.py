@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='hlr_agent',
+    name='tarq_agent',
     version='0.3.0',
-    description='HLR - Hierarchical LLM Routing',
+    description='TARQ (Temporal Async Reasoning & Queueing)',
     author='David Serrano Díaz',
     author_email='davidsd.2704@gmail.com',
     packages=find_packages(),

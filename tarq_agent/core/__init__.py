@@ -1,4 +1,3 @@
-"""HLR Core - Task Orchestration Engine"""
 
 from .orchestrator import Orchestrator
 
