@@ -17,19 +17,18 @@ async def llm_completion_async(
     model: str,
     prompt: str,
     system_message: str = "",
-    temperature: float = 0.1,
-    max_tokens: int = 150,
+    temperature: float = 0.0,
+    max_tokens: int = 100,  
     response_format: str = "text"
 ) -> tuple[str, dict]:
     
     api_key = _get_api_key(model)
     
-    if model.startswith("gpt-"):  # Handle all GPT models
+    if model.startswith("gpt-"):  
         client = AsyncOpenAI(api_key=api_key)
         
         # GPT-5 models use the new responses API
         if model.startswith("gpt-5"):
-            # Combine system message and prompt for GPT-5
             full_input = f"{system_message}\n\n{prompt}" if system_message else prompt
             
             extra_params = {
@@ -38,7 +37,6 @@ async def llm_completion_async(
             }
             
             if response_format == "json":
-                # For GPT-5, modify the input to request JSON format
                 full_input += "\n\nRespond with valid JSON only."
             
             response = await client.responses.create(
@@ -99,8 +97,8 @@ def _gemini_sync(model: str, prompt: str, system_message: str, temperature: floa
     config_params = {
         "temperature": temperature,
         "max_output_tokens": max_tokens,
-        "top_p": 0.9,
-        "top_k": 40
+        "top_p": 0.6,  # Further reduced for faster generation
+        "top_k": 20    # Further reduced for faster generation
     }
     if response_format == "json":
         config_params["response_mime_type"] = "application/json"

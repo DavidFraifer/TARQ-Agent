@@ -13,11 +13,12 @@ import time
 import uuid
 
 class Orchestrator:
-    def __init__(self, logger: Optional[TARQLogger] = None, light_llm: str = "gemini-2.5-flash-lite", heavy_llm: str = "gemini-2.5-flash-lite", agent_id: str = "unknown"):
+    def __init__(self, light_llm: str, heavy_llm: str, logger: Optional[TARQLogger] = None, agent_id: str = "unknown", disable_delegation: bool = False):
         self.logger = logger
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
         self.agent_id = agent_id
+        self.disable_delegation = disable_delegation
         self.tools = ToolContainer()
         self.message_queue = queue.Queue()
         self.scheduler_thread = None
@@ -133,7 +134,7 @@ class Orchestrator:
         # If this orchestrator is part of a team and the task was NOT forwarded, start the delegation worker in background
         delegate_task = None
         try:
-            if hasattr(self, 'team') and getattr(self, 'team') and not is_forwarded:
+            if hasattr(self, 'team') and getattr(self, 'team') and not is_forwarded and not self.disable_delegation:
                 # run delegate check in parallel; it may forward the task to another agent
                 delegate_task = asyncio.create_task(self._delegate_worker(payload, task_id))
         except Exception:

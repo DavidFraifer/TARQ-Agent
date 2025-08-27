@@ -2,17 +2,14 @@
 
 from tarq_agent import Agent, AgentTeams
 import time
-# Create teams (one custom ID, one auto-generated)
 auto_team = AgentTeams(name="Auto Team")
 
-# Create agents (one custom ID, one auto-generated)
-marketing_agent = Agent(tools=['jira', 'sheets'], agent_id="marketing-agent-001")
-sales_agent = Agent(tools=['gmail', 'sheets'], agent_id="sales-agent-001")
 
-# Add agents to teams
+marketing_agent = Agent(tools=['jira', 'sheets'], light_llm="gemini-2.5-flash-lite", heavy_llm="gemini-2.5-flash-lite")
+sales_agent = Agent(tools=['gmail', 'sheets'], light_llm="gemini-2.5-flash-lite", heavy_llm="gemini-2.5-flash-lite")
+
 auto_team.add_agent("marketing",marketing_agent)
 auto_team.add_agent("sales", sales_agent)
-
 
 # Start all agents in both teams
 auto_team.start_all()

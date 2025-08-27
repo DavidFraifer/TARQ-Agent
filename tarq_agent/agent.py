@@ -10,7 +10,7 @@ import time
 class Agent:
     SUPPORTED_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
     
-    def __init__(self, tools: List[Union[str, Tool]], light_llm: str = "gpt-5-nano", heavy_llm: str = "gpt-5-nano", enable_logging: bool = False, agent_id: Optional[str] = None):
+    def __init__(self, tools: List[Union[str, Tool]], light_llm: str, heavy_llm: str, enable_logging: bool = False, agent_id: Optional[str] = None, disable_delegation: bool = False):
         configure_api_keys()
         
         # Generate agent ID if not provided
@@ -23,9 +23,8 @@ class Agent:
         self.tools = tools
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
-    # role removed; tools describe agent capabilities
         self.logger = TARQLogger() if enable_logging else None
-        self.orchestrator = Orchestrator(logger=self.logger, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=self.agent_id)
+        self.orchestrator = Orchestrator(logger=self.logger, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=self.agent_id, disable_delegation=disable_delegation)
         self.running = False
 
         self._configure_tools()
