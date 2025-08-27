@@ -31,7 +31,7 @@ class ToolContainer:
             raise ValueError("Tool name and callable function required")
         self.tools[name.strip()] = func
         
-    async def execute_tool(self, name: str, context: str = "", task_id: str = None) -> str:
+    async def execute_tool(self, name: str, context: str = "", task_id: str = None, task_memory = None) -> str:
         """Execute a tool with the given context"""
         if name not in self.tools:
             raise ValueError(f"Tool '{name}' not found")
@@ -40,19 +40,21 @@ class ToolContainer:
         
         try:
             if asyncio.iscoroutinefunction(tool_func):
-                # Try to pass task_id if the function accepts it
                 try:
-                    result = await tool_func(context, task_id=task_id)
+                    result = await tool_func(context, task_id=task_id, task_memory=task_memory)
                 except TypeError:
-                    # Fallback if function doesn't accept task_id
-                    result = await tool_func(context)
+                    try:
+                        result = await tool_func(context, task_id=task_id)
+                    except TypeError:
+                        result = await tool_func(context)
             else:
-                # Try to pass task_id if the function accepts it
                 try:
-                    result = tool_func(context, task_id=task_id)
+                    result = tool_func(context, task_id=task_id, task_memory=task_memory)
                 except TypeError:
-                    # Fallback if function doesn't accept task_id
-                    result = tool_func(context)
+                    try:
+                        result = tool_func(context, task_id=task_id)
+                    except TypeError:
+                        result = tool_func(context)
             
             return str(result) if result is not None else "Tool completed successfully"
             

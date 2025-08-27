@@ -463,17 +463,15 @@ Output DSL only:"""
                 if command == "F":  # Fetch
                     tool = step[1]
                     console.info(f"Fetching data", f"Tool: {tool}", task_id=task_id)
-                    context = task_memory.get() if task_memory else ""
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id)
+                    context = original_message
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory)
                     last_fetch_result = result
-                    task_memory.set(f"Fetch {tool}: {result}")
                 
                 elif command == "A":  # Action
                     tool = step[1]
                     console.info(f"Executing action", f"Tool: {tool}", task_id=task_id)
-                    context = task_memory.get() if task_memory else ""
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id)
-                    task_memory.set(f"Action {tool}: {result}")
+                    context = original_message
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory)
                 
                 elif command == "IF":  # Conditional
                     condition = step[1]
