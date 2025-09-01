@@ -2,7 +2,7 @@ import random
 import time
 
 from ..utils.console import console
-from .websearch import WebSearch
+from .websearch import *
 
 
 def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None):
@@ -89,7 +89,7 @@ def slack_tool(user_input: str = "", task_id: str = None, task_memory=None):
 
 def websearch_tool(user_input: str = "", task_id: str = None, task_memory=None):
     try:
-        WebSearch(task_memory, user_input, task_id)
+        search_web(task_memory, user_input, task_id)
     except Exception:
         pass
 
