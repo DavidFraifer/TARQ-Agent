@@ -5,7 +5,7 @@ from tarq_agent import Agent
 
 
 agent = Agent(
-    tools=['jira', 'gmail', 'sheets', 'drive', 'calendar', 'slack'],
+    tools=['jira', 'gmail', 'sheets', 'drive', 'calendar', 'slack','websearch'],
     light_llm="gemini-2.5-flash-lite",
     heavy_llm="gemini-2.5-flash-lite",
     enable_logging=True
@@ -30,7 +30,7 @@ agent.start()
 # LEVEL 5 (Expert): Complex multi-conditional with feedback loops and multiple integrations - COMPLETED: DURATION AND TOKENS CANNOT BE TESTED
 #user_input = "Check gmail periodically every 15 minutes for monthly reports. If sender is from 'admin@google.com', immediately create a Jira ticket and schedule emergency meeting. If from 'support@google.com', update spreadsheet and send success notification to Slack."
 
-user_input = "Watch the gmail each hour until you receive a report in an email subject. When that happens you have to upload the details into the spreadsheet called '2025' and finish the task"
+user_input = "Can you search for the latest news on artificial intelligence?"
 agent.run(user_input)
         
 time.sleep(60) 

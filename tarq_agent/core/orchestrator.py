@@ -11,6 +11,7 @@ import threading
 import queue
 import time
 import uuid
+import re
 
 class Orchestrator:
     def __init__(self, light_llm: str, heavy_llm: str, logger: Optional[TARQLogger] = None, agent_id: str = "unknown", disable_delegation: bool = False):
@@ -464,14 +465,38 @@ Output DSL only:"""
                     tool = step[1]
                     console.info(f"Fetching data", f"Tool: {tool}", task_id=task_id)
                     context = original_message
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory)
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm)
                     last_fetch_result = result
+                    
+                    # Check if websearch tool has token info to add to task
+                    if tool == "websearch" and hasattr(self.tools.tools["websearch"], '_last_token_info'):
+                        token_info = getattr(self.tools.tools["websearch"], '_last_token_info')
+                        if self.logger and token_info:
+                            # Add websearch tokens to task tracking
+                            for _ in range(token_info.get("llm_calls", 0)):
+                                self.logger.add_tokens(task_id, {
+                                    "input_tokens": token_info.get("input_tokens", 0) // token_info.get("llm_calls", 1),
+                                    "output_tokens": token_info.get("output_tokens", 0) // token_info.get("llm_calls", 1),
+                                    "total_tokens": token_info.get("tokens_used", 0) // token_info.get("llm_calls", 1)
+                                }, self.light_llm)
                 
                 elif command == "A":  # Action
                     tool = step[1]
                     console.info(f"Executing action", f"Tool: {tool}", task_id=task_id)
                     context = original_message
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory)
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm)
+                    
+                    # Check if websearch tool has token info to add to task
+                    if tool == "websearch" and hasattr(self.tools.tools["websearch"], '_last_token_info'):
+                        token_info = getattr(self.tools.tools["websearch"], '_last_token_info')
+                        if self.logger and token_info:
+                            # Add websearch tokens to task tracking
+                            for _ in range(token_info.get("llm_calls", 0)):
+                                self.logger.add_tokens(task_id, {
+                                    "input_tokens": token_info.get("input_tokens", 0) // token_info.get("llm_calls", 1),
+                                    "output_tokens": token_info.get("output_tokens", 0) // token_info.get("llm_calls", 1),
+                                    "total_tokens": token_info.get("tokens_used", 0) // token_info.get("llm_calls", 1)
+                                }, self.light_llm)
                 
                 elif command == "IF":  # Conditional
                     condition = step[1]
@@ -669,20 +694,17 @@ JSON: {{"met": true/false}}"""
         return is_met, condition_time
 
     async def llm_validate_completion(self, original_message: str, task_memory, task_id: str):
-        # Limit memory for validation to save tokens
+        # Get full memory content for validation
         memory_content = task_memory.get() if task_memory else ""
-        if len(memory_content) > 200:
-            memory_content = memory_content[-200:]
         
         validation_prompt = f"""Task: {original_message}
 Results: {memory_content}
 
 If DONE: final_message only. If NOT DONE: continue_message only.
 JSON: {{"final_message": "", "continue_message": ""}}"""
-        
         try:
             llm_result = await llm_completion_async(
-                model=self.light_llm, prompt=validation_prompt, temperature=0.0, max_tokens=60, response_format="json"
+                model=self.light_llm, prompt=validation_prompt, temperature=0.1, max_tokens=500, response_format="json"
             )
 
             response, norm_token_info = self._normalize_llm_result(llm_result)
@@ -692,7 +714,18 @@ JSON: {{"final_message": "", "continue_message": ""}}"""
                 except Exception:
                     pass
 
-            result = json.loads(response.strip())
+            # Clean up common JSON formatting issues
+            response_clean = response.strip()
+            
+            # Fix common malformed patterns like extra commas and quotes
+            # Remove patterns like: .", ",\n" ,
+            response_clean = re.sub(r'\."\s*,\s*",\s*\\n"\s*,', '.",', response_clean)
+            # Remove patterns like: .", ",
+            response_clean = re.sub(r'\."\s*,\s*",', '.",', response_clean)
+            # Remove extra commas before closing braces
+            response_clean = re.sub(r',\s*}', '}', response_clean)
+            
+            result = json.loads(response_clean)
             final_message = result.get("final_message", "").strip()
             continue_message = result.get("continue_message", "").strip()
             
@@ -705,7 +738,22 @@ JSON: {{"final_message": "", "continue_message": ""}}"""
                 "continue_message": continue_message
             }
             
-        except Exception:
+        except json.JSONDecodeError as e:
+            # Try to extract just the final_message content if JSON is malformed
+            try:
+                # Look for final_message content between quotes
+                final_msg_match = re.search(r'"final_message":\s*"([^"]*(?:\\"[^"]*)*)"', response)
+                if final_msg_match:
+                    final_message = final_msg_match.group(1).replace('\\"', '"')
+                    return {
+                        "completed": True,
+                        "final_message": final_message,
+                        "continue_message": ""
+                    }
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"Error during LLM validation: {e}")
             return {"completed": True, "final_message": "Task execution completed successfully"}
 
     async def llm_delegate(self, message: str, task_id: str) -> str:
