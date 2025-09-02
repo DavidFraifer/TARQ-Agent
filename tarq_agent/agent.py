@@ -6,11 +6,12 @@ from .utils.logger import TARQLogger
 from .utils.console import console
 import uuid
 import time
+import os
 
 class Agent:
     SUPPORTED_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
     
-    def __init__(self, tools: List[Union[str, Tool]], light_llm: str, heavy_llm: str, enable_logging: bool = False, agent_id: Optional[str] = None, disable_delegation: bool = False):
+    def __init__(self, tools: List[Union[str, Tool]], light_llm: str, heavy_llm: str, enable_logging: bool = False, agent_id: Optional[str] = None, disable_delegation: bool = False, context: Optional[List[str]] = None):
         configure_api_keys()
         
         # Generate agent ID if not provided
@@ -24,7 +25,28 @@ class Agent:
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
         self.logger = TARQLogger() if enable_logging else None
-        self.orchestrator = Orchestrator(logger=self.logger, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=self.agent_id, disable_delegation=disable_delegation)
+        
+        # Initialize RAG engine only if context documents are provided
+        self.rag = None
+        if context:
+            console.info("RAG", "Context documents provided, initializing RAG engine...")
+            try:
+                from .rag import RAGEngine
+                self.rag = RAGEngine()
+                
+                # Only ingest documents if RAG engine was successfully initialized
+                if self.rag.is_enabled():
+                    console.info("RAG", "Ingesting context documents...")
+                    for doc_path in context:
+                        self.rag.ingest_file(doc_path)
+                else:
+                    console.warning("RAG", "RAG engine failed to initialize, continuing without context")
+                    self.rag = None
+            except ImportError as e:
+                console.warning("RAG", f"Failed to import RAG engine: {e}")
+                self.rag = None
+        
+        self.orchestrator = Orchestrator(logger=self.logger, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=self.agent_id, disable_delegation=disable_delegation, rag_engine=self.rag)
         self.running = False
 
         self._configure_tools()

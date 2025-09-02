@@ -14,10 +14,11 @@ import uuid
 import re
 
 class Orchestrator:
-    def __init__(self, light_llm: str, heavy_llm: str, logger: Optional[TARQLogger] = None, agent_id: str = "unknown", disable_delegation: bool = False):
+    def __init__(self, light_llm: str, heavy_llm: str, logger: Optional[TARQLogger] = None, agent_id: str = "unknown", disable_delegation: bool = False, rag_engine=None):
         self.logger = logger
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
+        self.rag_engine = rag_engine
         self.agent_id = agent_id
         self.disable_delegation = disable_delegation
         self.tools = ToolContainer()
@@ -163,16 +164,21 @@ class Orchestrator:
                 console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", task_id=task_id)
                 result = {"completed": False, "final_message": f"Task redirected to {target}"}
             else:
-                # Print timing info
-                console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
-
-                # Execute the DSL flow
-                flow = analysis.get("flow", [])
-                if flow:
-                    result = await self._execute_dsl_flow(flow, task_memory, task_id, payload)
+                # Check if this is a direct answer (no DSL needed)
+                if "direct_answer" in analysis:
+                    console.debug("Direct answer provided", "Skipping DSL execution to save tokens", task_id=task_id)
+                    result = {"completed": True, "final_message": analysis["direct_answer"]}
                 else:
-                    # Fallback: no flow provided, return simple completion
-                    result = {"completed": True, "final_message": "Task completed successfully"}
+                    # Print timing info
+                    console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
+
+                    # Execute the DSL flow
+                    flow = analysis.get("flow", [])
+                    if flow:
+                        result = await self._execute_dsl_flow(flow, task_memory, task_id, payload)
+                    else:
+                        # Fallback: no flow provided, return simple completion
+                        result = {"completed": True, "final_message": "Task completed successfully"}
             
             # Always use actual elapsed time for consistency
             task_duration = time.time() - start_time
@@ -227,6 +233,11 @@ class Orchestrator:
                 console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", task_id=task_id)
                 return {"completed": False, "final_message": f"Task redirected to {target}"}
 
+            # Check if this is a direct answer (no DSL needed)
+            if "direct_answer" in analysis:
+                console.debug("Direct answer provided", "Skipping DSL execution to save tokens", task_id=task_id)
+                return {"completed": True, "final_message": analysis["direct_answer"]}
+
             # Print timing info
             console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
             
@@ -246,14 +257,19 @@ class Orchestrator:
     
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
         # Limit memory context to save tokens
-                memory_content = task_memory.get() if task_memory else ""
-                if len(memory_content) > 150:
-                        memory_content = memory_content[-150:]
+        memory_content = task_memory.get() if task_memory else ""
 
-                available_tools = list(self.tools.tools.keys())
+        # Get RAG context if available
+        rag_context = ""
+        if self.rag_engine and self.rag_engine.is_enabled():
+            rag_context = self.rag_engine.get_context(message, max_length=500)
+            if rag_context:
+                rag_context = f"\nKnowledge Base:\n{rag_context}\n"
 
-                analysis_prompt = f"""Task: "{message}"
-Context: {memory_content}
+        available_tools = list(self.tools.tools.keys())
+
+        analysis_prompt = f"""Task: "{message}"
+Context: {memory_content}{rag_context}
 Tools: {available_tools}
 
 DSL Commands:
@@ -284,29 +300,37 @@ WHILE TRUE
     W 60
 ENDWHILE
 
+IMPORTANT: If the user just wants a regular answer that doesn't need any app API, output: Answer: [Answer to the user message]
+
 Output DSL only:"""
+        try:
+            llm_result = await llm_completion_async(
+                model=self.heavy_llm,
+                prompt=analysis_prompt,
+                temperature=0.1, 
+                max_tokens=150,  
+                response_format=None,
+            )
+
+            response, norm_token_info = self._normalize_llm_result(llm_result)
+
+            if self.logger:
                 try:
-                        llm_result = await llm_completion_async(
-                                model=self.heavy_llm,
-                                prompt=analysis_prompt,
-                                temperature=0.0,  # Maximum determinism
-                                max_tokens=100,  # Reduced from 150
-                                response_format=None,
-                        )
-
-                        response, norm_token_info = self._normalize_llm_result(llm_result)
-
-                        if self.logger:
-                                try:
-                                        self.logger.add_tokens(task_id, norm_token_info, self.heavy_llm)
-                                except Exception:
-                                        pass
-
-                        flow = self._parse_text_dsl(response)
-                        return {"flow": flow}
-
+                    self.logger.add_tokens(task_id, norm_token_info, self.heavy_llm)
                 except Exception:
-                        return {"flow": []}
+                    pass
+
+            # Check if this is a direct answer instead of DSL
+            if response.strip().startswith("Answer:"):
+                direct_answer = response.strip()[7:].strip()  # Remove "Answer:" prefix
+                return {"direct_answer": direct_answer}
+
+            flow = self._parse_text_dsl(response)
+            return {"flow": flow}
+
+        except Exception:
+            # Return empty flow on any error, not direct answer
+            return {"flow": []}
 
     def _parse_text_dsl(self, text: str) -> List:
         """Parse text DSL into array format for execution"""
@@ -594,6 +618,16 @@ Output DSL only:"""
                             new_analysis = await self.llm_analyze_task(extended_task, task_memory, task_id)
                             analysis_time = time.time() - analysis_start
                             console.debug("Re-analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
+                            
+                            # Check if re-analysis resulted in a direct answer
+                            if "direct_answer" in new_analysis:
+                                console.debug("Direct answer provided on re-analysis", "Stopping execution", task_id=task_id)
+                                execution_time = time.time() - execution_start
+                                return {
+                                    "completed": True,
+                                    "final_message": new_analysis["direct_answer"],
+                                    "execution_time": execution_time
+                                }
                             
                             if new_analysis and new_analysis.get("flow"):
                                 console.debug("Re-analysis generated new plan", "Continuing with new flow", task_id=task_id)

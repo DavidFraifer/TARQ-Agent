@@ -9,7 +9,7 @@ agent = Agent(
     light_llm="gemini-2.5-flash-lite",
     heavy_llm="gemini-2.5-flash-lite",
     enable_logging=True
-)
+    )
 
 agent.start()
 
@@ -30,7 +30,7 @@ agent.start()
 # LEVEL 5 (Expert): Complex multi-conditional with feedback loops and multiple integrations - COMPLETED: DURATION AND TOKENS CANNOT BE TESTED
 #user_input = "Check gmail periodically every 15 minutes for monthly reports. If sender is from 'admin@google.com', immediately create a Jira ticket and schedule emergency meeting. If from 'support@google.com', update spreadsheet and send success notification to Slack."
 
-user_input = "Can you search for the latest news on artificial intelligence?"
+user_input = "Me puedes recordar cual era la definicion que la empresa tenia de tasa de retencion y cual era la meta para el Q2?"
 agent.run(user_input)
         
 time.sleep(60) 

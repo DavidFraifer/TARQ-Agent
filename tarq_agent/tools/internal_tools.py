@@ -1,6 +1,5 @@
 import random
 import time
-import asyncio
 
 from ..utils.console import console
 from .websearch import web_search
@@ -35,7 +34,7 @@ def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None):
 
 
 def drive_tool(user_input: str = "", task_id: str = None, task_memory=None):
-    message = f"File uploaded to Google Drive - Document saved to /Reports/ folder"
+    message = f"File uploaded to Google Drive - Document saved to data folder"
     try:
         console.tool(f"[DRIVE] {message}", task_id=task_id)
     except Exception:
