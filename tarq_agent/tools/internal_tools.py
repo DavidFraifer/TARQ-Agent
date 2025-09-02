@@ -1,8 +1,9 @@
 import random
 import time
+import asyncio
 
 from ..utils.console import console
-from .websearch import *
+from .websearch import web_search
 
 
 def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None):
@@ -87,33 +88,55 @@ def slack_tool(user_input: str = "", task_id: str = None, task_memory=None):
             pass
 
 
-def websearch_tool(user_input: str = "", task_id: str = None, task_memory=None):
+async def websearch_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm=None):
+    """
+    Web search tool that performs intelligent web search with LLM-powered query extraction and summarization.
+    
+    Args:
+        user_input: The user's search query or request
+        task_id: Task identifier for logging
+        task_memory: Task memory object for storing results
+        light_llm: The light LLM model to use for processing
+    
+    Returns:
+        Search results summary
+    """
     try:
-        #search_web(task_memory, user_input, task_id)
-        print("Revisar implemetnación de websearch_tool")
-        print("internal_tool.py/websearch_tool")
-        """
-                async def main():
-            # Example usage
-            text = "Search in web about catenary, i dont know what it is, basic explanation"
-            console.info (f"User query: \" {text} \" ")
-            summary = await web_search(
-                task_memory=[],  # Empty list for task memory
-                text=text,  # Your search query
-                task_id=1,  # Task identifier
-                fast_search=False  # True for single result, False for multiple results
-            )
-            
-            print("\n=== Search Summary ===")
-            print(summary)
-            print("=====================")
+        result, token_info = await web_search(
+            task_memory=task_memory or [],
+            text=user_input,
+            task_id=task_id or "websearch",
+            fast_search=True,  
+            light_llm=light_llm
+        )
+        
+        # Store result in task memory if available
+        if task_memory:
+            try:
+                task_memory.set(f"Web search result: {result}")
+            except Exception:
+                pass
 
-        if __name__ == "__main__":
-            # Run the async function
-            asyncio.run(main())
-        """
-    except Exception:
-        pass
+        # Store token info in a way the orchestrator can access it
+        # We'll attach it to the result string in a way that can be parsed
+        setattr(websearch_tool, '_last_token_info', token_info)
+        
+        return result
+        
+    except Exception as e:
+        error_msg = f"Web search failed: {str(e)}"
+        try:
+            console.error("WEBSEARCH", error_msg, task_id=task_id)
+        except Exception:
+            print(f"[WebSearch Error] {error_msg}")
+        
+        if task_memory:
+            try:
+                task_memory.set(f"Web search error: {error_msg}")
+            except Exception:
+                pass
+        
+        return f"Sorry, web search encountered an error: {str(e)}"
 
 
 

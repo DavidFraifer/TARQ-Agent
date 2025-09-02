@@ -1,23 +1,12 @@
 from ..utils.console import console
 import requests
-from pathlib import Path
-import os
-from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from ..internal.llm import llm_completion_async
-import asyncio
+from ..config import get_cached_api_key
+from ..utils.pricing import llm_pricing
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-
-def _normalize_tokens(token_info: dict) -> dict:
-    return {
-        "tokens_used": token_info.get("tokens_used", token_info.get("total_tokens", 0)),
-        "input_tokens": token_info.get("input_tokens", 0),
-        "output_tokens": token_info.get("output_tokens", 0),
-        "llm_calls": token_info.get("llm_calls", 0) or 1,  # cada llamada = 1
-        "total_cost": token_info.get("total_cost", 0.0)
-    }
 
 
 def _get_page_content(url):
@@ -45,15 +34,16 @@ def _get_page_content(url):
 
 
 
-# Si se van a buscar más de 5 resultados refactorizar para aiohttp y asyncio
 def _search_web(task_memory, user_input, task_id, fast_search):
     """Search the web using Brave API and scrape pages in parallel with threads, with detailed logging."""
     start_time = time.perf_counter()
 
-    # Load API key
-    env_path = Path(__file__).resolve().parent.parent / '.env'
-    load_dotenv(dotenv_path=env_path)
-    brave_key = os.getenv('BRAVE_KEY')
+    # Get API key from centralized config system
+    try:
+        brave_key = get_cached_api_key('brave')
+    except ValueError as e:
+        console.error("Web Search", f"BRAVE API key not found: {str(e)}")
+        return []
 
     console.info("Web Scraping", f"Getting Results for: {user_input}")
     try:
@@ -78,7 +68,7 @@ def _search_web(task_memory, user_input, task_id, fast_search):
         results = response['web']['results']
         console.info("Web Scraping", f"Launching scraping in parallel for {len(results)} URLs")
 
-        # 👇 paralelizamos con threads
+        # Parallelize with threads
         with ThreadPoolExecutor(max_workers=5) as executor:
             future_to_result = {}
             for r in results:
@@ -109,7 +99,6 @@ def _search_web(task_memory, user_input, task_id, fast_search):
 def _threaded_scrape_wrapper(url):
     """Wrapper around _get_page_content to add logging per thread."""
     thread_name = threading.current_thread().name
-    #console.info("Thread Start", f"[{thread_name}] Starting scrape for {url}")
     start_time = time.perf_counter()
 
     content = _get_page_content(url)
@@ -120,7 +109,7 @@ def _threaded_scrape_wrapper(url):
 
 
 
-async def _search_and_summarize(task_memory: list, query: str, task_id: int = 1, fast_search: bool = True):
+async def _search_and_summarize(task_memory: list, query: str, task_id: int = 1, fast_search: bool = True, light_llm: str = "gemini-2.5-flash-lite"):
     start_time = time.perf_counter()
     LIMIT_LLM_CONTENT = 5000
     
@@ -145,7 +134,7 @@ async def _search_and_summarize(task_memory: list, query: str, task_id: int = 1,
     
     llm_start = time.perf_counter()
     summary, token_info = await llm_completion_async(
-        model="gemini-2.5-flash-lite",
+        model=light_llm,
         prompt=prompt,
         system_message=f"You are a helpful assistant that summarizes web search results clearly and concisely. The starting request was {query}, compose your summary based on that",
         max_tokens=500
@@ -157,7 +146,7 @@ async def _search_and_summarize(task_memory: list, query: str, task_id: int = 1,
     return summary, token_info
 
 
-async def web_search(task_memory, text, task_id=1, fast_search=True):
+async def web_search(task_memory, text, task_id=1, fast_search=True, light_llm: str = "gemini-2.5-flash-lite"):
     start_time = time.perf_counter()
     console.tool("Web Search", "LLM Query inference - Extracting search query")
 
@@ -171,7 +160,7 @@ async def web_search(task_memory, text, task_id=1, fast_search=True):
 
     llm_start = time.perf_counter()
     user_input, token_info_extract = await llm_completion_async(
-        model="gemini-2.5-flash-lite",
+        model=light_llm,
         prompt=prompt,
         system_message="You are an assistant that extracts the user's search query from any given text.",
         max_tokens=100
@@ -184,28 +173,28 @@ async def web_search(task_memory, text, task_id=1, fast_search=True):
     console.info("Web Search", f"Inferred search query: '{user_input}' in {llm_duration:.2f}s")
   
     console.tool("Web Search", "Proceeding to web search")
-    results, token_info_summary = await _search_and_summarize(task_memory=task_memory, query=user_input, task_id=task_id, fast_search=fast_search)
+    results, token_info_summary = await _search_and_summarize(task_memory=task_memory, query=user_input, task_id=task_id, fast_search=fast_search, light_llm=light_llm)
     
     total_duration = time.perf_counter() - start_time
     console.info("Web Search", f"Total web_search execution time: {total_duration:.2f}s")
 
-    # Merge token info de ambas llamadas al LLM
+    # Merge token info de ambas llamadas al LLM y calcular costo
+    input_tokens_total = token_info_extract.get("input_tokens", 0) + token_info_summary.get("input_tokens", 0)
+    output_tokens_total = token_info_extract.get("output_tokens", 0) + token_info_summary.get("output_tokens", 0)
+    
+    # Calculate total cost using the pricing system
+    total_cost, _ = llm_pricing.calculate_cost(light_llm, input_tokens_total, output_tokens_total)
+    
     merged_tokens = {
         "tokens_used": token_info_extract.get("total_tokens", 0) + token_info_summary.get("total_tokens", 0),
-        "input_tokens": token_info_extract.get("input_tokens", 0) + token_info_summary.get("input_tokens", 0),
-        "output_tokens": token_info_extract.get("output_tokens", 0) + token_info_summary.get("output_tokens", 0),
-        "llm_calls": token_info_extract.get("llm_calls", 0) + token_info_summary.get("llm_calls", 0),               # NOT RETURNED IN SUMMARY
-        "total_cost": token_info_extract.get("total_cost", 0.0) + token_info_summary.get("total_cost", 0.0)         # NOT RETURNED IN SUMMARY
+        "input_tokens": input_tokens_total,
+        "output_tokens": output_tokens_total,
+        "llm_calls": 2,  # websearch always makes 2 LLM calls (query extraction + summarization)
+        "total_cost": total_cost
     }
 
-    # Aquí ya puedes llamar a task_summary
-    console.task_summary(
-        task_id=task_id,
-        duration=total_duration,
-        tokens=merged_tokens,
-        status="completed",
-        final_message="Web search and summarization done"
-    )
+    # Log websearch completion with token info (but don't complete the task)
+    console.info("Web Search", f"Search completed. Tokens: {merged_tokens['tokens_used']} | Calls: {merged_tokens['llm_calls']} | Cost: ${merged_tokens['total_cost']:.5f}")
 
-    return results
+    return results, merged_tokens
 

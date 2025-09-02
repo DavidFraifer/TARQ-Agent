@@ -62,6 +62,7 @@ class EnvLoader:
         key_mappings = {
             'openai': ['OPENAI_API_KEY', 'OPENAI_KEY'],
             'gemini': ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_KEY'],
+            'brave': ['BRAVE_API_KEY', 'BRAVE_KEY'],
         }
         
         for key in key_mappings.get(service.lower(), [f"{service.upper()}_API_KEY"]):

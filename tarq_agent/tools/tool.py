@@ -31,7 +31,7 @@ class ToolContainer:
             raise ValueError("Tool name and callable function required")
         self.tools[name.strip()] = func
         
-    async def execute_tool(self, name: str, context: str = "", task_id: str = None, task_memory = None) -> str:
+    async def execute_tool(self, name: str, context: str = "", task_id: str = None, task_memory = None, light_llm: str = "gpt-4o-mini") -> str:
         """Execute a tool with the given context"""
         if name not in self.tools:
             raise ValueError(f"Tool '{name}' not found")
@@ -41,7 +41,11 @@ class ToolContainer:
         try:
             if asyncio.iscoroutinefunction(tool_func):
                 try:
-                    result = await tool_func(context, task_id=task_id, task_memory=task_memory)
+                    # Special handling for websearch tool to pass light_llm parameter
+                    if name == "websearch":
+                        result = await tool_func(context, task_id=task_id, task_memory=task_memory, light_llm=light_llm)
+                    else:
+                        result = await tool_func(context, task_id=task_id, task_memory=task_memory)
                 except TypeError:
                     try:
                         result = await tool_func(context, task_id=task_id)
@@ -49,7 +53,11 @@ class ToolContainer:
                         result = await tool_func(context)
             else:
                 try:
-                    result = tool_func(context, task_id=task_id, task_memory=task_memory)
+                    # Special handling for websearch tool to pass light_llm parameter
+                    if name == "websearch":
+                        result = tool_func(context, task_id=task_id, task_memory=task_memory, light_llm=light_llm)
+                    else:
+                        result = tool_func(context, task_id=task_id, task_memory=task_memory)
                 except TypeError:
                     try:
                         result = tool_func(context, task_id=task_id)
