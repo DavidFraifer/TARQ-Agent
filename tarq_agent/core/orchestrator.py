@@ -219,42 +219,6 @@ class Orchestrator:
                 comp_time = elapsed - total_wait_time
                 self.logger.complete_task(task_id, "error", comp_time)
     
-    async def handle_message(self, message: str, task_memory, task_id: str = "default") -> Dict[str, Any]:
-        try:
-            # Step 1: Initial Analysis with timing
-            analysis_start = time.time()
-            analysis = await self.llm_analyze_task(message, task_memory, task_id)
-            analysis_time = time.time() - analysis_start
-            # If a delegate redirected this task while analysis was running, stop here and suppress analysis output
-            if task_id in getattr(self, '_redirects', {}):
-                info = self._redirects.get(task_id, {})
-                target = info.get('target_name', 'unknown')
-                # Minimal log: delegate already redirected the task
-                console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", task_id=task_id)
-                return {"completed": False, "final_message": f"Task redirected to {target}"}
-
-            # Check if this is a direct answer (no DSL needed)
-            if "direct_answer" in analysis:
-                console.debug("Direct answer provided", "Skipping DSL execution to save tokens", task_id=task_id)
-                return {"completed": True, "final_message": analysis["direct_answer"]}
-
-            # Print timing info
-            console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
-            
-            # Execute the DSL flow
-            flow = analysis.get("flow", [])
-            if flow:
-                return await self._execute_dsl_flow(flow, task_memory, task_id, message)
-            else:
-                # Fallback: no flow provided, return simple completion
-                return {
-                    "completed": True,
-                    "final_message": "Task completed successfully"
-                }
-            
-        except Exception as e:
-            return {"completed": True, "final_message": f"Task failed: {str(e)}"}
-    
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
         # Limit memory context to save tokens
         memory_content = task_memory.get() if task_memory else ""
@@ -300,6 +264,26 @@ WHILE TRUE
     W 60
 ENDWHILE
 
+"Monitor emails until finding messages from BOTH admin and support, then stop"
+WHILE TRUE
+    F gmail
+    IF (the sender is "admin@google.com")
+        A jira
+    ELSEIF (the sender is "support@google.com")
+        A sheets
+    ENDIF
+    IF (found emails from both admin and support in memory)
+        STOP
+    ENDIF
+    W 15
+ENDWHILE
+
+CRITICAL RULES:
+- NEVER put STOP inside IF/ELSEIF blocks unless the task says "stop immediately when X happens"
+- For "stop when you find BOTH X and Y" tasks: execute actions for each condition separately, then check if BOTH conditions are met before STOP
+- Use separate IF block for final completion check: IF (all required conditions met) STOP ENDIF
+- Memory contains action history - use it to verify completion criteria
+
 IMPORTANT: If the user just wants a regular answer that doesn't need any app API, output: Answer: [Answer to the user message]
 
 Output DSL only:"""
@@ -307,13 +291,12 @@ Output DSL only:"""
             llm_result = await llm_completion_async(
                 model=self.heavy_llm,
                 prompt=analysis_prompt,
-                temperature=0.1, 
-                max_tokens=150,  
+                temperature=0.0,  # Maximum determinism for DSL parsing
+                max_tokens=100,   # Reduced from 150 for efficiency
                 response_format=None,
             )
 
             response, norm_token_info = self._normalize_llm_result(llm_result)
-
             if self.logger:
                 try:
                     self.logger.add_tokens(task_id, norm_token_info, self.heavy_llm)
@@ -326,6 +309,35 @@ Output DSL only:"""
                 return {"direct_answer": direct_answer}
 
             flow = self._parse_text_dsl(response)
+            
+            # DEBUG: Show the structure more clearly
+            def print_flow_structure(flow_item, indent=0):
+                spaces = "  " * indent
+                if isinstance(flow_item, list) and len(flow_item) > 0:
+                    if flow_item[0] == "WHILE":
+                        print(f"{spaces}WHILE {flow_item[1]}")
+                        for sub_item in flow_item[2]:
+                            print_flow_structure(sub_item, indent + 1)
+                        print(f"{spaces}ENDWHILE")
+                    elif flow_item[0] == "IF":
+                        print(f"{spaces}IF {flow_item[1]}")
+                        for sub_item in flow_item[2]:
+                            print_flow_structure(sub_item, indent + 1)
+                        if len(flow_item) > 3 and flow_item[3]:
+                            print(f"{spaces}ELSE")
+                            for sub_item in flow_item[3]:
+                                print_flow_structure(sub_item, indent + 1)
+                        print(f"{spaces}ENDIF")
+                    else:
+                        print(f"{spaces}{' '.join(str(x) for x in flow_item)}")
+                else:
+                    print(f"{spaces}{flow_item}")
+            
+            print("Parsed Flow Structure:")
+            for item in flow:
+                print_flow_structure(item)
+            print("=" * 40)
+            
             return {"flow": flow}
 
         except Exception:
@@ -430,6 +442,7 @@ Output DSL only:"""
         """Parse WHILE/ENDWHILE block"""
         body_block = []
         i = start_idx
+        expected_indent = 4  # WHILE body uses 4-space indentation
         
         while i < len(lines):
             line = lines[i]  # Don't strip - need indentation
@@ -437,34 +450,23 @@ Output DSL only:"""
             
             if line.strip() == 'ENDWHILE':
                 break
-            elif line.startswith('  '):
+            elif line.startswith(' ' * expected_indent):
                 # Indented line - part of while body
-                line_content = line[2:]  # Remove indentation
+                line_content = line[expected_indent:]  # Remove expected indentation
                 if line_content.startswith('IF '):
                     # Nested conditional in while loop
                     condition = line_content[3:].strip()
-                    then_block, else_block, i = self._parse_conditional_block(lines, i, 4)
+                    if condition.startswith('(') and condition.endswith(')'):
+                        condition = condition[1:-1].strip()
+                    then_block, else_block, new_i = self._parse_conditional_block(lines, i, expected_indent + 4)
                     body_block.append(["IF", condition, then_block, else_block])
-                    i -= 1  # Adjust for the increment at loop start
+                    i = new_i  # Update index to skip processed lines
                 else:
                     cmd = self._parse_simple_command(line_content)
                     if cmd:
                         body_block.append(cmd)
         
         return body_block, i
-
-    def _contains_infinite_loop(self, flow: List) -> bool:
-        """Check if flow contains WHILE true/True/1/always"""
-        for step in flow:
-            if isinstance(step, list) and len(step) >= 2:
-                if step[0] == "WHILE" and step[1].lower() in ["true", "1", "always"]:
-                    return True
-                # Check nested flows
-                if step[0] in ["IF", "WHILE"] and len(step) > 2:
-                    for sub_flow in step[2:]:
-                        if isinstance(sub_flow, list) and self._contains_infinite_loop(sub_flow):
-                            return True
-        return False
 
     async def _execute_dsl_flow(self, flow: List, task_memory, task_id: str, original_message: str, parent_fetch_result: str = "", skip_validation: bool = False) -> Dict[str, Any]:
         """Execute the new DSL flow structure"""
@@ -476,7 +478,6 @@ Output DSL only:"""
             console.info(f"Task redirected", f"Forwarded to {target}", task_id=task_id)
             return {"completed": False, "final_message": f"Task redirected to {target}"}
         last_fetch_result = parent_fetch_result
-        has_infinite_loop = self._contains_infinite_loop(flow) and not skip_validation
         
         try:
             for step in flow:
@@ -528,18 +529,24 @@ Output DSL only:"""
                     else_steps = step[3] if len(step) > 3 else []
                     
                     # Evaluate condition against last fetch result
-                    condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_id)
+                    condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_memory, task_id)
                     
                     if condition_result:
                         console.info(f"✅ Condition met: {condition}", f"Executing THEN steps (Time: {condition_time:.2f}s)", task_id=task_id)
-                        sub_result = await self._execute_dsl_flow(then_steps, task_memory, task_id, original_message, last_fetch_result)
-                        if sub_result.get("completed", False):
+                        sub_result = await self._execute_dsl_flow(then_steps, task_memory, task_id, original_message, last_fetch_result, skip_validation)
+                        # Only return early if STOP was used, or if not in skip-validation mode
+                        if sub_result.get("stopped_via_command", False):
+                            return sub_result
+                        if not skip_validation and sub_result.get("completed", False):
                             return sub_result
                     else:
                         if else_steps:
                             console.info(f"❌ Condition not met: {condition}", f"Executing ELSE steps (Time: {condition_time:.2f}s)", task_id=task_id)
-                            sub_result = await self._execute_dsl_flow(else_steps, task_memory, task_id, original_message, last_fetch_result)
-                            if sub_result.get("completed", False):
+                            sub_result = await self._execute_dsl_flow(else_steps, task_memory, task_id, original_message, last_fetch_result, skip_validation)
+                            # Only return early if STOP was used, or if not in skip-validation mode
+                            if sub_result.get("stopped_via_command", False):
+                                return sub_result
+                            if not skip_validation and sub_result.get("completed", False):
                                 return sub_result
                         else:
                             console.debug(f"❌ Condition not met: {condition}", f"No else clause (Time: {condition_time:.2f}s)", task_id=task_id)
@@ -552,7 +559,7 @@ Output DSL only:"""
                     console.info(f"Starting WHILE loop", f"Condition: {condition}", task_id=task_id)
                     
                     while self.running and iteration <= 100:  # Safety limit
-                        condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_id)
+                        condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_memory, task_id)
                         
                         if not condition_result:
                             console.info(f"WHILE loop ended", f"Condition false after {iteration-1} iterations", task_id=task_id)
@@ -573,7 +580,7 @@ Output DSL only:"""
                 
                 elif command == "WAIT":  # Wait/Sleep
                     minutes = step[1] if len(step) > 1 else 1
-                    seconds = minutes / 60  # Convert minutes to seconds
+                    seconds = minutes / 60  # Fast-simulate minutes as seconds for examples/tests
                     console.info(f"Waiting", f"{minutes} minutes ({seconds}s)", task_id=task_id)
                     
                     # Track wait time for computational timing
@@ -645,15 +652,6 @@ Output DSL only:"""
                             "execution_time": execution_time
                         }
             
-            # For infinite loops, never exit - keep running indefinitely
-            if has_infinite_loop:
-                execution_time = time.time() - execution_start
-                return {
-                    "completed": False,
-                    "final_message": "Periodic task stopped unexpectedly",
-                    "execution_time": execution_time
-                }
-            
             # Skip validation if requested
             if skip_validation:
                 execution_time = time.time() - execution_start
@@ -684,8 +682,8 @@ Output DSL only:"""
                 "execution_time": execution_time
             }
 
-    async def _evaluate_dsl_condition(self, condition: str, last_result: str, task_id: str) -> tuple[bool, float]:
-        """Evaluate DSL condition against last_result"""
+    async def _evaluate_dsl_condition(self, condition: str, last_result: str, task_memory, task_id: str) -> tuple[bool, float]:
+        """Evaluate DSL condition against task memory and last result"""
         condition_start = time.time()
         
         # Optimize obvious conditions without LLM call
@@ -697,17 +695,41 @@ Output DSL only:"""
             condition_time = time.time() - condition_start
             return False, condition_time
         
-        # Use LLM for complex conditions
-        prompt = f"""Data: {last_result}
-Condition: {condition}
-JSON: {{"met": true/false}}"""
+        # Get task memory for context (truncate to reduce tokens)
+        memory_content = task_memory.get() if task_memory else ""
+        memory_lines = memory_content.splitlines() if memory_content else []
+        memory_content_lite = "\n".join(memory_lines[-15:])  # last 15 lines only
+
+        # Single compact prompt for any condition; let LLM decide using provided context
+        # Make the prompt more explicit about what to check
+        if "AND" in condition or "found" in condition.lower() or "both" in condition.lower():
+            # This is a completion check - scan all memory
+            prompt = (
+                f"Question: {condition}\n"
+                f"Memory:\n{memory_content_lite}\n\n"
+                f"Answer with JSON: {{\"met\": true/false}}"
+            )
+        else:
+            # This is an immediate check - use most recent memory entry
+            recent_entry = memory_lines[-1] if memory_lines else ""
+            # Extract just the core content without the timestamp/numbering
+            if recent_entry and "] " in recent_entry:
+                recent_content = recent_entry.split("] ", 1)[1] if "] " in recent_entry else recent_entry
+            else:
+                recent_content = recent_entry
+                
+            prompt = (
+                f"Question: {condition}\n"
+                f"Recent: {recent_content}\n\n"
+                f"Answer with JSON: {{\"met\": true/false}}"
+            )
         
         try:
             llm_result = await llm_completion_async(
                 model=self.light_llm,
                 prompt=prompt,
                 temperature=0.0,
-                max_tokens=25,
+                max_tokens=20,
                 response_format="json"
             )
 
@@ -721,7 +743,7 @@ JSON: {{"met": true/false}}"""
             result = json.loads(response.strip())
             is_met = result.get("met", False)
 
-        except Exception:
+        except Exception as e:
             is_met = False
             
         condition_time = time.time() - condition_start
@@ -730,15 +752,19 @@ JSON: {{"met": true/false}}"""
     async def llm_validate_completion(self, original_message: str, task_memory, task_id: str):
         # Get full memory content for validation
         memory_content = task_memory.get() if task_memory else ""
+        mem_lines = memory_content.splitlines() if memory_content else []
+        memory_content_lite = "\n".join(mem_lines[-15:])  
         
-        validation_prompt = f"""Task: {original_message}
-Results: {memory_content}
-
-If DONE: final_message only. If NOT DONE: continue_message only.
-JSON: {{"final_message": "", "continue_message": ""}}"""
+        validation_prompt = (
+            f"Task: {original_message}\n"
+            f"Results:\n{memory_content_lite}\n\n"
+            f"Return JSON only. If done, set final_message (leave continue_message empty). "
+            f"If not done, set continue_message (leave final_message empty).\n\n"
+            f"{{\"final_message\": \"\", \"continue_message\": \"\"}}"
+        )
         try:
             llm_result = await llm_completion_async(
-                model=self.light_llm, prompt=validation_prompt, temperature=0.1, max_tokens=500, response_format="json"
+                model=self.light_llm, prompt=validation_prompt, temperature=0.0, max_tokens=80, response_format="json"
             )
 
             response, norm_token_info = self._normalize_llm_result(llm_result)
@@ -787,7 +813,7 @@ JSON: {{"final_message": "", "continue_message": ""}}"""
             except Exception:
                 pass
         except Exception as e:
-            print(f"Error during LLM validation: {e}")
+            console.error("LLM validation failed", str(e), task_id=task_id)
             return {"completed": True, "final_message": "Task execution completed successfully"}
 
     async def llm_delegate(self, message: str, task_id: str) -> str:

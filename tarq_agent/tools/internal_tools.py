@@ -17,7 +17,7 @@ def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None):
     try:
         console.tool(f"[GMAIL] {message}", task_id=task_id)
     except Exception:
-        print(f"[Gmail] {message}")
+        pass  # Fallback for console errors
 
 
 def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None):
@@ -25,7 +25,7 @@ def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None):
     try:
         console.tool(f"[SHEETS] {message}", task_id=task_id)
     except Exception:
-        print(f"[Sheets] {message}")
+        pass  # Fallback for console errors
     if task_memory:
         try:
             task_memory.set(f"Tool sheets: {message}")
@@ -38,7 +38,7 @@ def drive_tool(user_input: str = "", task_id: str = None, task_memory=None):
     try:
         console.tool(f"[DRIVE] {message}", task_id=task_id)
     except Exception:
-        print(f"[Drive] {message}")
+        pass  # Fallback for console errors
     if task_memory:
         try:
             task_memory.set(f"Tool drive: {message}")
@@ -52,7 +52,7 @@ def jira_tool(user_input: str = "", task_id: str = None, task_memory=None):
     try:
         console.tool(f"[JIRA] {message}", task_id=task_id)
     except Exception:
-        print(f"[Jira] {message}")
+        pass  # Fallback for console errors
     if task_memory:
         try:
             task_memory.set(f"Tool jira: {message}")
@@ -66,7 +66,7 @@ def calendar_tool(user_input: str = "", task_id: str = None, task_memory=None):
     try:
         console.tool(f"[CALENDAR] {message}", task_id=task_id)
     except Exception:
-        print(f"[Calendar] {message}")
+        pass  # Fallback for console errors
     if task_memory:
         try:
             task_memory.set(f"Tool calendar: {message}")
@@ -79,7 +79,7 @@ def slack_tool(user_input: str = "", task_id: str = None, task_memory=None):
     try:
         console.tool(f"[SLACK] {message}", task_id=task_id)
     except Exception:
-        print(f"[Slack] {message}")
+        pass  # Fallback for console errors
     if task_memory:
         try:
             task_memory.set(f"Tool slack: {message}")
@@ -127,7 +127,7 @@ async def websearch_tool(user_input: str = "", task_id: str = None, task_memory=
         try:
             console.error("WEBSEARCH", error_msg, task_id=task_id)
         except Exception:
-            print(f"[WebSearch Error] {error_msg}")
+            pass  # Fallback for console errors
         
         if task_memory:
             try:
