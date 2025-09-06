@@ -9,6 +9,7 @@ agent = Agent(
     light_llm="gemini-2.5-flash-lite",
     heavy_llm="gemini-2.5-flash-lite",
     enable_logging=True
+    #context=["company_info.pdf"]
 )
 
 agent.start()
@@ -16,7 +17,7 @@ agent.start()
 # ================== TEST EXAMPLES - INCREASING DIFFICULTY ==================
 
 # LEVEL 0: No tools needed
-#user_input = "Cual es la definición del KPI Tasa de Retención  según la info de la empresa y cual es la meta en el Q2"
+#user_input = "Cual es la definición del KPI Tasa de Retención según la info de la empresa y cual es la meta en el Q2"
 
 # LEVEL 1 (Easy): Simple single tool usage - Duration: 2.73s (compute: 2.73s) Tokens: 307 (input: 272, output: 35) | LLM Calls: 2
 #user_input = "What is the last mail"
@@ -31,9 +32,8 @@ agent.start()
 #user_input = "Watch the gmail each hour until you receive a report in an email subject. When that happens you have to upload the details into the spreadsheet called '2025' and finish the task"
 
 # LEVEL 5 (Expert): Complex multi-conditional with feedback loops and multiple integrations - COMPLETED: DURATION AND TOKENS CANNOT BE TESTED
-#user_input = "Check the gmail periodically every 15 minutes in a loop for monthly reports. If sender is from 'admin@google.com', immediately create a Jira ticket and schedule emergency meeting. If from 'support@google.com', update spreadsheet and send success notification to Slack. Stop the loop when you find one email from both senders "
+user_input = "Check the gmail periodically every 15 minutes in a loop for monthly reports. If sender is from 'admin@google.com', immediately create a Jira ticket and schedule emergency meeting. If from 'support@google.com', update spreadsheet and send success notification to Slack. Stop the loop when you find one email from both senders "
 
-user_input = "Search the last stock price available from amazon"
 agent.run(user_input)
         
 time.sleep(60) 

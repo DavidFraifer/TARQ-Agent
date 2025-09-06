@@ -232,34 +232,28 @@ class Orchestrator:
 
         available_tools = list(self.tools.tools.keys())
 
-        analysis_prompt = f"""Task: "{message}"
+        analysis_prompt = f"""
+Task: "{message}"
 Context: {memory_content}{rag_context}
 Tools: {available_tools}
 
-DSL Commands:
-W N=wait N min, F TOOL=fetch (before IF/WHILE), A TOOL=action, IF (condition)/ELSE/ENDIF=conditional, WHILE/ENDWHILE=loop, STOP=complete
+DSL:
+W N=wait N min | F TOOL=fetch (before IF/WHILE) | A TOOL=action | IF/ELSEIF/ELSE/ENDIF=conditions | WHILE/ENDWHILE=loops | STOP=complete
 
 Examples:
 "Look at 'Annual Report' in sheets and send an email"
 A sheets
 A gmail
 
-"Check mail for reports, if from admin create ticket, if from support update sheet, else post in slack"
-F gmail
-IF (the sender is "admin@google.com")
-    A jira
-ELSEIF (the sender is "support@google.com")
-    A sheets
-ELSE
-    A slack
-ENDIF
 
-"Watch gmail every hour for a report then upload it to sheets"
+"Watch gmail every hour for a report then upload it to sheets, in case the email is not a report notify me in slack"
 WHILE TRUE
     F gmail
-    IF (the subject contains "report")
+    IF (subject contains "report")
         A sheets
         STOP
+    ELSE
+        A slack
     ENDIF
     W 60
 ENDWHILE
@@ -267,9 +261,9 @@ ENDWHILE
 "Monitor emails until finding messages from BOTH admin and support, then stop"
 WHILE TRUE
     F gmail
-    IF (the sender is "admin@google.com")
+    IF (sender="admin@google.com")
         A jira
-    ELSEIF (the sender is "support@google.com")
+    ELSEIF (sender="support@google.com")
         A sheets
     ENDIF
     IF (found emails from both admin and support in memory)
@@ -278,15 +272,16 @@ WHILE TRUE
     W 15
 ENDWHILE
 
-CRITICAL RULES:
-- NEVER put STOP inside IF/ELSEIF blocks unless the task says "stop immediately when X happens"
-- For "stop when you find BOTH X and Y" tasks: execute actions for each condition separately, then check if BOTH conditions are met before STOP
-- Use separate IF block for final completion check: IF (all required conditions met) STOP ENDIF
-- Memory contains action history - use it to verify completion criteria
+Rules:
+- STOP only inside IF/ELSEIF if task says "stop immediately"
+- For "stop when BOTH X and Y": do actions separately, then check both before STOP
+- Final completion check must be in its own IF
+- Memory = action history → use to verify
 
-IMPORTANT: If the user just wants a regular answer that doesn't need any app API, output: Answer: [Answer to the user message]
-
-Output DSL only:"""
+If user needs only a normal answer (no tool use):  
+Answer: [response]
+"""
+        
         try:
             llm_result = await llm_completion_async(
                 model=self.heavy_llm,
@@ -529,7 +524,7 @@ Output DSL only:"""
                     else_steps = step[3] if len(step) > 3 else []
                     
                     # Evaluate condition against last fetch result
-                    condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_memory, task_id)
+                    condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_memory, task_id, original_message)
                     
                     if condition_result:
                         console.info(f"✅ Condition met: {condition}", f"Executing THEN steps (Time: {condition_time:.2f}s)", task_id=task_id)
@@ -559,7 +554,7 @@ Output DSL only:"""
                     console.info(f"Starting WHILE loop", f"Condition: {condition}", task_id=task_id)
                     
                     while self.running and iteration <= 100:  # Safety limit
-                        condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_memory, task_id)
+                        condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_memory, task_id, original_message)
                         
                         if not condition_result:
                             console.info(f"WHILE loop ended", f"Condition false after {iteration-1} iterations", task_id=task_id)
@@ -682,7 +677,7 @@ Output DSL only:"""
                 "execution_time": execution_time
             }
 
-    async def _evaluate_dsl_condition(self, condition: str, last_result: str, task_memory, task_id: str) -> tuple[bool, float]:
+    async def _evaluate_dsl_condition(self, condition: str, last_result: str, task_memory, task_id: str, original_message: str = "") -> tuple[bool, float]:
         """Evaluate DSL condition against task memory and last result"""
         condition_start = time.time()
         
@@ -705,6 +700,7 @@ Output DSL only:"""
         if "AND" in condition or "found" in condition.lower() or "both" in condition.lower():
             # This is a completion check - scan all memory
             prompt = (
+                f"Task: {original_message}\n"
                 f"Question: {condition}\n"
                 f"Memory:\n{memory_content_lite}\n\n"
                 f"Answer with JSON: {{\"met\": true/false}}"
@@ -719,6 +715,7 @@ Output DSL only:"""
                 recent_content = recent_entry
                 
             prompt = (
+                f"Task: {original_message}\n"
                 f"Question: {condition}\n"
                 f"Recent: {recent_content}\n\n"
                 f"Answer with JSON: {{\"met\": true/false}}"
@@ -762,9 +759,10 @@ Output DSL only:"""
             f"If not done, set continue_message (leave final_message empty).\n\n"
             f"{{\"final_message\": \"\", \"continue_message\": \"\"}}"
         )
+        print(validation_prompt)
         try:
             llm_result = await llm_completion_async(
-                model=self.light_llm, prompt=validation_prompt, temperature=0.0, max_tokens=80, response_format="json"
+                model=self.light_llm, prompt=validation_prompt, temperature=0.1, max_tokens=500, response_format="json"
             )
 
             response, norm_token_info = self._normalize_llm_result(llm_result)
