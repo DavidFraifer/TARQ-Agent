@@ -167,15 +167,15 @@ class ProfessionalConsole:
         # Combine task status and final message in one line
         if final_message:
             if status == "completed":
-                self.success(f"Task {task_id} COMPLETED - {final_message}")
-                self.task(f"Task {task_id} COMPLETED - Closing task")
+                self.success(f"Task {task_id} COMPLETED - {final_message}", task_id=task_id)
+                self.task(f"Task {task_id} COMPLETED - Closing task", task_id=task_id)
             else:
-                self.warning(f"Task {task_id} {status.upper()} - {final_message}")
-                self.task(f"Task {task_id} {status.upper()} - Closing task")
+                self.warning(f"Task {task_id} {status.upper()} - {final_message}", task_id=task_id)
+                self.task(f"Task {task_id} {status.upper()} - Closing task", task_id=task_id)
         else:
-            self.task(f"Task {task_id} {status_text}")
+            self.task(f"Task {task_id} {status_text}", task_id=task_id)
         
-        self.info(timing_info, f"{tokens_info} | {calls_info} | {cost_info}")
+        self.info(timing_info, f"{tokens_info} | {calls_info} | {cost_info}", task_id=task_id)
 
 # Global console instance
 console = ProfessionalConsole()

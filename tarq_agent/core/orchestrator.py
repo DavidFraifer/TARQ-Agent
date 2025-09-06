@@ -203,10 +203,7 @@ class Orchestrator:
             # Display task summary with both timing types
             console.task_summary(task_id, task_duration, token_info, status, final_message, computational_time)
             
-            # Display additional timing breakdown only if there was wait time
-            if total_wait_time > 0:
-                console.info(f"Timing breakdown", f"Total: {task_duration:.2f}s | Computational: {computational_time:.2f}s | Wait: {total_wait_time:.2f}s", task_id=task_id)
-            
+
             if self.logger:
                 self.logger.complete_task(task_id, status, computational_time)
         except Exception as e:
@@ -328,11 +325,7 @@ Answer: [response]
                 else:
                     print(f"{spaces}{flow_item}")
             
-            print("Parsed Flow Structure:")
-            for item in flow:
-                print_flow_structure(item)
-            print("=" * 40)
-            
+
             return {"flow": flow}
 
         except Exception:
@@ -759,7 +752,6 @@ Answer: [response]
             f"If not done, set continue_message (leave final_message empty).\n\n"
             f"{{\"final_message\": \"\", \"continue_message\": \"\"}}"
         )
-        print(validation_prompt)
         try:
             llm_result = await llm_completion_async(
                 model=self.light_llm, prompt=validation_prompt, temperature=0.1, max_tokens=500, response_format="json"
