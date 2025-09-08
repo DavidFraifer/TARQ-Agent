@@ -486,7 +486,7 @@ Answer: [response]
                     tool = step[1]
                     console.info(f"Fetching data", f"Tool: {tool}", task_id=task_id, agent_id=self.agent_id)
                     context = original_message
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, agent_id=self.agent_id)
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, heavy_llm=self.heavy_llm, agent_id=self.agent_id)
                     last_fetch_result = result
                     
                     # Check if websearch tool has token info to add to task
@@ -505,7 +505,7 @@ Answer: [response]
                     tool = step[1]
                     console.info(f"Executing action", f"Tool: {tool}", task_id=task_id, agent_id=self.agent_id)
                     context = original_message
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, agent_id=self.agent_id)
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, heavy_llm=self.heavy_llm, agent_id=self.agent_id)
                     
                     # Check if websearch tool has token info to add to task
                     if tool == "websearch" and hasattr(self.tools.tools["websearch"], '_last_token_info'):
