@@ -6,8 +6,7 @@ def main():
     agent = Agent(
         tools=['gmail', 'sheets', 'slack', 'drive', 'websearch'],
         light_llm="gemini-2.5-flash-lite",
-        heavy_llm="gemini-2.5-flash-lite",
-        enable_logging=True
+        heavy_llm="gemini-2.5-flash-lite"
     )
 
     agent.start()

@@ -80,16 +80,24 @@ class ProfessionalConsole:
         """Get formatted timestamp"""
         return time.strftime("%H:%M:%S")
     
-    def _format_message(self, level: LogLevel, message: str, details: Optional[str] = None, task_id: Optional[str] = None) -> str:
+    def _format_message(self, level: LogLevel, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None) -> str:
         """Format a message with timestamp and level"""
         timestamp = self._colorize(self._get_timestamp(), Colors.DIM)
         level_color = self.level_colors.get(level, Colors.WHITE)
         level_text = self._colorize(f"[{level.value:^7}]", level_color + Colors.BOLD)
         
-        # Add task ID if provided
+        # Add agent ID and task ID if provided
+        id_parts = []
+        if agent_id:
+            agent_text = self._colorize(f"[{agent_id}]", Colors.MAGENTA)
+            id_parts.append(agent_text)
         if task_id:
             task_text = self._colorize(f"[{task_id}]", Colors.BRIGHT_BLUE)
-            formatted = f"{timestamp} {level_text} {task_text} {message}"
+            id_parts.append(task_text)
+            
+        if id_parts:
+            ids_text = " ".join(id_parts)
+            formatted = f"{timestamp} {level_text} {ids_text} {message}"
         else:
             formatted = f"{timestamp} {level_text} {message}"
         
@@ -99,45 +107,45 @@ class ProfessionalConsole:
             
         return formatted
     
-    def print(self, level: LogLevel, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def print(self, level: LogLevel, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print a formatted message"""
         with self._lock:
-            formatted = self._format_message(level, message, details, task_id)
+            formatted = self._format_message(level, message, details, task_id, agent_id)
             print(formatted)
     
-    def info(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def info(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print info message"""
-        self.print(LogLevel.INFO, message, details, task_id)
+        self.print(LogLevel.INFO, message, details, task_id, agent_id)
     
-    def success(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def success(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print success message"""
-        self.print(LogLevel.SUCCESS, message, details, task_id)
+        self.print(LogLevel.SUCCESS, message, details, task_id, agent_id)
     
-    def warning(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def warning(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print warning message"""
-        self.print(LogLevel.WARNING, message, details, task_id)
+        self.print(LogLevel.WARNING, message, details, task_id, agent_id)
     
-    def error(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def error(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print error message"""
-        self.print(LogLevel.ERROR, message, details, task_id)
+        self.print(LogLevel.ERROR, message, details, task_id, agent_id)
     
-    def debug(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def debug(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print debug message"""
-        self.print(LogLevel.DEBUG, message, details, task_id)
+        self.print(LogLevel.DEBUG, message, details, task_id, agent_id)
     
-    def task(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def task(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print task-related message"""
-        self.print(LogLevel.TASK, message, details, task_id)
+        self.print(LogLevel.TASK, message, details, task_id, agent_id)
     
-    def system(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def system(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print system message"""
-        self.print(LogLevel.SYSTEM, message, details, task_id)
+        self.print(LogLevel.SYSTEM, message, details, task_id, agent_id)
     
-    def tool(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None):
+    def tool(self, message: str, details: Optional[str] = None, task_id: Optional[str] = None, agent_id: Optional[str] = None):
         """Print tool-related message"""
-        self.print(LogLevel.TOOL, message, details, task_id)
+        self.print(LogLevel.TOOL, message, details, task_id, agent_id)
     
-    def task_summary(self, task_id: str, duration: float, tokens: dict, status: str, final_message: str = None, computational_time: float = None):
+    def task_summary(self, task_id: str, duration: float, tokens: dict, status: str, final_message: str = None, computational_time: float = None, agent_id: Optional[str] = None):
         """Print a formatted task summary"""
         status_color = Colors.GREEN if status == "completed" else Colors.YELLOW if status == "incomplete" else Colors.RED
         status_text = self._colorize(status.upper(), status_color + Colors.BOLD)
@@ -167,15 +175,15 @@ class ProfessionalConsole:
         # Combine task status and final message in one line
         if final_message:
             if status == "completed":
-                self.success(f"Task {task_id} COMPLETED - {final_message}", task_id=task_id)
-                self.task(f"Task {task_id} COMPLETED - Closing task", task_id=task_id)
+                self.success(f"Task {task_id} COMPLETED - {final_message}", task_id=task_id, agent_id=agent_id)
+                self.task(f"Task {task_id} COMPLETED - Closing task", task_id=task_id, agent_id=agent_id)
             else:
-                self.warning(f"Task {task_id} {status.upper()} - {final_message}", task_id=task_id)
-                self.task(f"Task {task_id} {status.upper()} - Closing task", task_id=task_id)
+                self.warning(f"Task {task_id} {status.upper()} - {final_message}", task_id=task_id, agent_id=agent_id)
+                self.task(f"Task {task_id} {status.upper()} - Closing task", task_id=task_id, agent_id=agent_id)
         else:
-            self.task(f"Task {task_id} {status_text}", task_id=task_id)
+            self.task(f"Task {task_id} {status_text}", task_id=task_id, agent_id=agent_id)
         
-        self.info(timing_info, f"{tokens_info} | {calls_info} | {cost_info}", task_id=task_id)
+        self.info(timing_info, f"{tokens_info} | {calls_info} | {cost_info}", task_id=task_id, agent_id=agent_id)
 
 # Global console instance
 console = ProfessionalConsole()

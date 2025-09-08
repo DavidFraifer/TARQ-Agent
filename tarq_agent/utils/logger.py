@@ -15,7 +15,7 @@ class TARQLogger:
         self.active_tasks[task_id] = {
             "task_id": task_id,
             "agent_id": agent_id,
-            "message": message[:100] + "..." if len(message) > 100 else message,
+            "message": message,
             "start_time": time.time(),
             "start_datetime": datetime.now().isoformat(),
             "iterations": 0,
@@ -83,6 +83,7 @@ class TARQLogger:
         try:
             log_entry = {
                 "task_id": task_data["task_id"],
+                "agent_id": task_data.get("agent_id", "unknown"),
                 "message": task_data["message"],
                 "start_time": task_data["start_datetime"],
                 "end_time": task_data["end_datetime"],

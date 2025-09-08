@@ -5,7 +5,7 @@ from ..utils.console import console
 from .websearch import web_search
 
 
-def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None):
+def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None, agent_id: str = None):
     emails = ["support@google.com", "admin@google.com"]
     current_email = random.choice(emails)
     message = f"Email checked - Found message from: {current_email} with subject: 'Monthly Report Available'"
@@ -15,15 +15,15 @@ def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None):
         except Exception:
             pass
     try:
-        console.tool(f"[GMAIL] {message}", task_id=task_id)
+        console.tool(f"[GMAIL] {message}", task_id=task_id, agent_id=agent_id)
     except Exception:
         pass  # Fallback for console errors
 
 
-def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None):
+def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None, agent_id: str = None):
     message = f"Spreadsheet updated - Added new data row with timestamp {time.strftime('%Y-%m-%d %H:%M:%S')}"
     try:
-        console.tool(f"[SHEETS] {message}", task_id=task_id)
+        console.tool(f"[SHEETS] {message}", task_id=task_id, agent_id=agent_id)
     except Exception:
         pass  # Fallback for console errors
     if task_memory:
@@ -33,10 +33,10 @@ def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None):
             pass
 
 
-def drive_tool(user_input: str = "", task_id: str = None, task_memory=None):
+def drive_tool(user_input: str = "", task_id: str = None, task_memory=None, agent_id: str = None):
     message = f"File uploaded to Google Drive - Document saved to data folder"
     try:
-        console.tool(f"[DRIVE] {message}", task_id=task_id)
+        console.tool(f"[DRIVE] {message}", task_id=task_id, agent_id=agent_id)
     except Exception:
         pass  # Fallback for console errors
     if task_memory:
@@ -46,11 +46,11 @@ def drive_tool(user_input: str = "", task_id: str = None, task_memory=None):
             pass
 
 
-def jira_tool(user_input: str = "", task_id: str = None, task_memory=None):
+def jira_tool(user_input: str = "", task_id: str = None, task_memory=None, agent_id: str = None):
     ticket_id = f"TARQ-{random.randint(1000, 9999)}"
     message = f"Jira ticket created - {ticket_id}: Task tracking ticket generated"
     try:
-        console.tool(f"[JIRA] {message}", task_id=task_id)
+        console.tool(f"[JIRA] {message}", task_id=task_id, agent_id=agent_id)
     except Exception:
         pass  # Fallback for console errors
     if task_memory:
@@ -60,11 +60,11 @@ def jira_tool(user_input: str = "", task_id: str = None, task_memory=None):
             pass
 
 
-def calendar_tool(user_input: str = "", task_id: str = None, task_memory=None):
+def calendar_tool(user_input: str = "", task_id: str = None, task_memory=None, agent_id: str = None):
     event_time = time.strftime('%Y-%m-%d %H:%M:%S')
     message = f"Calendar event created - Meeting scheduled for {event_time}"
     try:
-        console.tool(f"[CALENDAR] {message}", task_id=task_id)
+        console.tool(f"[CALENDAR] {message}", task_id=task_id, agent_id=agent_id)
     except Exception:
         pass  # Fallback for console errors
     if task_memory:
@@ -74,10 +74,10 @@ def calendar_tool(user_input: str = "", task_id: str = None, task_memory=None):
             pass
 
 
-def slack_tool(user_input: str = "", task_id: str = None, task_memory=None):
+def slack_tool(user_input: str = "", task_id: str = None, task_memory=None, agent_id: str = None):
     message = f"Slack message sent - Notification delivered to #general channel"
     try:
-        console.tool(f"[SLACK] {message}", task_id=task_id)
+        console.tool(f"[SLACK] {message}", task_id=task_id, agent_id=agent_id)
     except Exception:
         pass  # Fallback for console errors
     if task_memory:

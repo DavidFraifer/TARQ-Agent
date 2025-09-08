@@ -4,7 +4,7 @@ from ..tools.tool import ToolContainer
 from ..tools.internal_tools import internal_tools
 from ..memory.AgentMemory import AgentMemory
 from ..internal.llm import llm_completion_async
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 import asyncio
 import json
 import threading
@@ -14,7 +14,7 @@ import uuid
 import re
 
 class Orchestrator:
-    def __init__(self, light_llm: str, heavy_llm: str, logger: Optional[TARQLogger] = None, agent_id: str = "unknown", disable_delegation: bool = False, rag_engine=None):
+    def __init__(self, light_llm: str, heavy_llm: str, logger: TARQLogger, agent_id: str = "unknown", disable_delegation: bool = False, rag_engine=None):
         self.logger = logger
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
@@ -22,6 +22,7 @@ class Orchestrator:
         self.agent_id = agent_id
         self.disable_delegation = disable_delegation
         self.tools = ToolContainer()
+        self.tool_descriptions = {}  # Store descriptions for custom tools
         self.message_queue = queue.Queue()
         self.scheduler_thread = None
         self.running = False
@@ -32,8 +33,10 @@ class Orchestrator:
         for tool_name, tool_func in internal_tools.items():
             self.tools.add_tool(tool_name, tool_func)
         
-    def add_tool(self, name: str, func):
+    def add_tool(self, name: str, func, description: str = None):
         self.tools.add_tool(name, func)
+        if description:
+            self.tool_descriptions[name] = description
 
     def _normalize_llm_result(self, llm_result):
         """Normalize various possible return shapes from llm_completion_async.
@@ -128,19 +131,16 @@ class Orchestrator:
 
         # Truncate message for logging display
         display_message = payload[:60] + "..." if isinstance(payload, str) and len(payload) > 60 else payload
-        console.task(f"Task {task_id} ADDED [Agent: {self.agent_id}] - {display_message}", task_id=task_id)
+        console.task(f"Task {task_id} ADDED [Agent: {self.agent_id}] - {display_message}", task_id=task_id, agent_id=self.agent_id)
         
-        if self.logger:
-            self.logger.start_task(task_id, message, self.agent_id)
+        self.logger.start_task(task_id, message, self.agent_id)
 
         # If this orchestrator is part of a team and the task was NOT forwarded, start the delegation worker in background
         delegate_task = None
         try:
             if hasattr(self, 'team') and getattr(self, 'team') and not is_forwarded and not self.disable_delegation:
-                # run delegate check in parallel; it may forward the task to another agent
                 delegate_task = asyncio.create_task(self._delegate_worker(payload, task_id))
         except Exception:
-            # Non-fatal: delegation is best-effort
             delegate_task = None
 
         try:
@@ -161,16 +161,16 @@ class Orchestrator:
             if task_id in getattr(self, '_redirects', {}):
                 info = self._redirects.get(task_id, {})
                 target = info.get('target_name', 'unknown')
-                console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", task_id=task_id)
+                console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", task_id=task_id, agent_id=self.agent_id)
                 result = {"completed": False, "final_message": f"Task redirected to {target}"}
             else:
                 # Check if this is a direct answer (no DSL needed)
                 if "direct_answer" in analysis:
-                    console.debug("Direct answer provided", "Skipping DSL execution to save tokens", task_id=task_id)
+                    console.debug("Direct answer provided", "Skipping DSL execution to save tokens", task_id=task_id, agent_id=self.agent_id)
                     result = {"completed": True, "final_message": analysis["direct_answer"]}
                 else:
                     # Print timing info
-                    console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
+                    console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id, agent_id=self.agent_id)
 
                     # Execute the DSL flow
                     flow = analysis.get("flow", [])
@@ -188,7 +188,7 @@ class Orchestrator:
             computational_time = task_duration - total_wait_time
             
             # Get token information for summary
-            task_data = self.logger.active_tasks.get(task_id, {}) if self.logger else {}
+            task_data = self.logger.active_tasks.get(task_id, {})
             token_info = {
                 'tokens_used': task_data.get('tokens_used', 0),
                 'input_tokens': task_data.get('input_tokens', 0),
@@ -201,20 +201,17 @@ class Orchestrator:
             final_message = result.get('final_message', "Task execution finished" if status == "completed" else "Task incomplete")
             
             # Display task summary with both timing types
-            console.task_summary(task_id, task_duration, token_info, status, final_message, computational_time)
+            console.task_summary(task_id, task_duration, token_info, status, final_message, computational_time, agent_id=self.agent_id)
             
-
-            if self.logger:
-                self.logger.complete_task(task_id, status, computational_time)
+            self.logger.complete_task(task_id, status, computational_time)
         except Exception as e:
-            console.error("Task execution failed", str(e), task_id=task_id)
+            console.error("Task execution failed", str(e), task_id=task_id, agent_id=self.agent_id)
             task_memory.set(f"ERROR: {str(e)}")
-            if self.logger:
-                # Ensure computational_time is defined on error path
-                elapsed = time.time() - start_time
-                total_wait_time = self.wait_times.get(task_id, 0.0)
-                comp_time = elapsed - total_wait_time
-                self.logger.complete_task(task_id, "error", comp_time)
+            # Ensure computational_time is defined on error path
+            elapsed = time.time() - start_time
+            total_wait_time = self.wait_times.get(task_id, 0.0)
+            comp_time = elapsed - total_wait_time
+            self.logger.complete_task(task_id, "error", comp_time)
     
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
         # Limit memory context to save tokens
@@ -228,11 +225,23 @@ class Orchestrator:
                 rag_context = f"\nKnowledge Base:\n{rag_context}\n"
 
         available_tools = list(self.tools.tools.keys())
+        
+        # Build tool descriptions - include descriptions only for custom tools
+        tools_info = []
+        for tool_name in available_tools:
+            if tool_name in self.tool_descriptions:
+                # Custom tool with description
+                tools_info.append(f"{tool_name}: {self.tool_descriptions[tool_name]}")
+            else:
+                # Internal tool without description
+                tools_info.append(tool_name)
+        
+        tools_display = "[" + ", ".join(tools_info) + "]"
 
         analysis_prompt = f"""
 Task: "{message}"
 Context: {memory_content}{rag_context}
-Tools: {available_tools}
+Tools: {tools_display}
 
 DSL:
 W N=wait N min | F TOOL=fetch (before IF/WHILE) | A TOOL=action | IF/ELSEIF/ELSE/ENDIF=conditions | WHILE/ENDWHILE=loops | STOP=complete
@@ -289,11 +298,10 @@ Answer: [response]
             )
 
             response, norm_token_info = self._normalize_llm_result(llm_result)
-            if self.logger:
-                try:
-                    self.logger.add_tokens(task_id, norm_token_info, self.heavy_llm)
-                except Exception:
-                    pass
+            try:
+                self.logger.add_tokens(task_id, norm_token_info, self.heavy_llm)
+            except Exception:
+                pass
 
             # Check if this is a direct answer instead of DSL
             if response.strip().startswith("Answer:"):
@@ -463,7 +471,7 @@ Answer: [response]
         if task_id in getattr(self, '_redirects', {}):
             info = self._redirects.get(task_id, {})
             target = info.get('target_name', 'unknown')
-            console.info(f"Task redirected", f"Forwarded to {target}", task_id=task_id)
+            console.info(f"Task redirected", f"Forwarded to {target}", task_id=task_id, agent_id=self.agent_id)
             return {"completed": False, "final_message": f"Task redirected to {target}"}
         last_fetch_result = parent_fetch_result
         
@@ -476,15 +484,15 @@ Answer: [response]
                 
                 if command == "F":  # Fetch
                     tool = step[1]
-                    console.info(f"Fetching data", f"Tool: {tool}", task_id=task_id)
+                    console.info(f"Fetching data", f"Tool: {tool}", task_id=task_id, agent_id=self.agent_id)
                     context = original_message
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm)
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, agent_id=self.agent_id)
                     last_fetch_result = result
                     
                     # Check if websearch tool has token info to add to task
                     if tool == "websearch" and hasattr(self.tools.tools["websearch"], '_last_token_info'):
                         token_info = getattr(self.tools.tools["websearch"], '_last_token_info')
-                        if self.logger and token_info:
+                        if token_info:
                             # Add websearch tokens to task tracking
                             for _ in range(token_info.get("llm_calls", 0)):
                                 self.logger.add_tokens(task_id, {
@@ -495,14 +503,14 @@ Answer: [response]
                 
                 elif command == "A":  # Action
                     tool = step[1]
-                    console.info(f"Executing action", f"Tool: {tool}", task_id=task_id)
+                    console.info(f"Executing action", f"Tool: {tool}", task_id=task_id, agent_id=self.agent_id)
                     context = original_message
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm)
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, agent_id=self.agent_id)
                     
                     # Check if websearch tool has token info to add to task
                     if tool == "websearch" and hasattr(self.tools.tools["websearch"], '_last_token_info'):
                         token_info = getattr(self.tools.tools["websearch"], '_last_token_info')
-                        if self.logger and token_info:
+                        if token_info:
                             # Add websearch tokens to task tracking
                             for _ in range(token_info.get("llm_calls", 0)):
                                 self.logger.add_tokens(task_id, {
@@ -520,7 +528,7 @@ Answer: [response]
                     condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_memory, task_id, original_message)
                     
                     if condition_result:
-                        console.info(f"✅ Condition met: {condition}", f"Executing THEN steps (Time: {condition_time:.2f}s)", task_id=task_id)
+                        console.info(f"✅ Condition met: {condition}", f"Executing THEN steps (Time: {condition_time:.2f}s)", task_id=task_id, agent_id=self.agent_id)
                         sub_result = await self._execute_dsl_flow(then_steps, task_memory, task_id, original_message, last_fetch_result, skip_validation)
                         # Only return early if STOP was used, or if not in skip-validation mode
                         if sub_result.get("stopped_via_command", False):
@@ -529,7 +537,7 @@ Answer: [response]
                             return sub_result
                     else:
                         if else_steps:
-                            console.info(f"❌ Condition not met: {condition}", f"Executing ELSE steps (Time: {condition_time:.2f}s)", task_id=task_id)
+                            console.info(f"❌ Condition not met: {condition}", f"Executing ELSE steps (Time: {condition_time:.2f}s)", task_id=task_id, agent_id=self.agent_id)
                             sub_result = await self._execute_dsl_flow(else_steps, task_memory, task_id, original_message, last_fetch_result, skip_validation)
                             # Only return early if STOP was used, or if not in skip-validation mode
                             if sub_result.get("stopped_via_command", False):
@@ -537,23 +545,23 @@ Answer: [response]
                             if not skip_validation and sub_result.get("completed", False):
                                 return sub_result
                         else:
-                            console.debug(f"❌ Condition not met: {condition}", f"No else clause (Time: {condition_time:.2f}s)", task_id=task_id)
+                            console.debug(f"❌ Condition not met: {condition}", f"No else clause (Time: {condition_time:.2f}s)", task_id=task_id, agent_id=self.agent_id)
                 
                 elif command == "WHILE":  # Loop with condition
                     condition = step[1]
                     body_steps = step[2] if len(step) > 2 else []
                     iteration = 1
                     
-                    console.info(f"Starting WHILE loop", f"Condition: {condition}", task_id=task_id)
+                    console.info(f"Starting WHILE loop", f"Condition: {condition}", task_id=task_id, agent_id=self.agent_id)
                     
                     while self.running and iteration <= 100:  # Safety limit
                         condition_result, condition_time = await self._evaluate_dsl_condition(condition, last_fetch_result, task_memory, task_id, original_message)
                         
                         if not condition_result:
-                            console.info(f"WHILE loop ended", f"Condition false after {iteration-1} iterations", task_id=task_id)
+                            console.info(f"WHILE loop ended", f"Condition false after {iteration-1} iterations", task_id=task_id, agent_id=self.agent_id)
                             break
                         
-                        console.info(f"WHILE iteration #{iteration}", f"Executing body steps", task_id=task_id)
+                        console.info(f"WHILE iteration #{iteration}", f"Executing body steps", task_id=task_id, agent_id=self.agent_id)
                         sub_result = await self._execute_dsl_flow(body_steps, task_memory, task_id, original_message, last_fetch_result, skip_validation=True)
                         
                         # Check if STOP command was executed (always exit on STOP, even for infinite loops)
@@ -569,7 +577,7 @@ Answer: [response]
                 elif command == "WAIT":  # Wait/Sleep
                     minutes = step[1] if len(step) > 1 else 1
                     seconds = minutes / 60  # Fast-simulate minutes as seconds for examples/tests
-                    console.info(f"Waiting", f"{minutes} minutes ({seconds}s)", task_id=task_id)
+                    console.info(f"Waiting", f"{minutes} minutes ({seconds}s)", task_id=task_id, agent_id=self.agent_id)
                     
                     # Track wait time for computational timing
                     wait_start = time.time()
@@ -582,13 +590,13 @@ Answer: [response]
                     self.wait_times[task_id] += wait_duration
                 
                 elif command == "STOP":  # Stop execution
-                    console.info(f"STOP command reached", "Completing task", task_id=task_id)
+                    console.info(f"STOP command reached", "Completing task", task_id=task_id, agent_id=self.agent_id)
                     
                     # Run validation to get proper final message
                     validation_start = time.time()
                     validation = await self.llm_validate_completion(original_message, task_memory, task_id)
                     validation_time = time.time() - validation_start
-                    console.debug("STOP validation completed", f"Time: {validation_time:.2f}s", task_id=task_id)
+                    console.debug("STOP validation completed", f"Time: {validation_time:.2f}s", task_id=task_id, agent_id=self.agent_id)
                     
                     # Check if task is actually complete or needs more work
                     if validation.get("completed", True):
@@ -603,7 +611,7 @@ Answer: [response]
                         # Task is not complete, check for continue_message for feedback loop
                         continue_message = validation.get("continue_message", "")
                         if continue_message:
-                            console.info("Task incomplete", "Re-analyzing with additional context", task_id=task_id)
+                            console.info("Task incomplete", "Re-analyzing with additional context", task_id=task_id, agent_id=self.agent_id)
                             
                             # Create extended task description with continue guidance
                             extended_task = f"{original_message}\n\nPrevious progress context: {continue_message}"
@@ -612,11 +620,11 @@ Answer: [response]
                             analysis_start = time.time()
                             new_analysis = await self.llm_analyze_task(extended_task, task_memory, task_id)
                             analysis_time = time.time() - analysis_start
-                            console.debug("Re-analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id)
+                            console.debug("Re-analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id, agent_id=self.agent_id)
                             
                             # Check if re-analysis resulted in a direct answer
                             if "direct_answer" in new_analysis:
-                                console.debug("Direct answer provided on re-analysis", "Stopping execution", task_id=task_id)
+                                console.debug("Direct answer provided on re-analysis", "Stopping execution", task_id=task_id, agent_id=self.agent_id)
                                 execution_time = time.time() - execution_start
                                 return {
                                     "completed": True,
@@ -625,11 +633,11 @@ Answer: [response]
                                 }
                             
                             if new_analysis and new_analysis.get("flow"):
-                                console.debug("Re-analysis generated new plan", "Continuing with new flow", task_id=task_id)
+                                console.debug("Re-analysis generated new plan", "Continuing with new flow", task_id=task_id, agent_id=self.agent_id)
                                 # Continue with new analysis - restart the loop
                                 return await self._execute_dsl_flow(new_analysis["flow"], task_memory, task_id, original_message, "", skip_validation)
                             else:
-                                console.warning("Re-analysis failed", "Completing with partial results", task_id=task_id)
+                                console.warning("Re-analysis failed", "Completing with partial results", task_id=task_id, agent_id=self.agent_id)
                         
                         # If no continue_message or re-analysis failed, complete with current state
                         execution_time = time.time() - execution_start
@@ -653,7 +661,7 @@ Answer: [response]
             validation_start = time.time()
             validation = await self.llm_validate_completion(original_message, task_memory, task_id)
             validation_time = time.time() - validation_start
-            console.debug("DSL flow validation completed", f"Time: {validation_time:.2f}s", task_id=task_id)
+            console.debug("DSL flow validation completed", f"Time: {validation_time:.2f}s", task_id=task_id, agent_id=self.agent_id)
             
             execution_time = time.time() - execution_start
             return {
@@ -724,11 +732,10 @@ Answer: [response]
             )
 
             response, norm_token_info = self._normalize_llm_result(llm_result)
-            if self.logger:
-                try:
-                    self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
-                except Exception:
-                    pass
+            try:
+                self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
+            except Exception:
+                pass
 
             result = json.loads(response.strip())
             is_met = result.get("met", False)
@@ -744,7 +751,6 @@ Answer: [response]
         memory_content = task_memory.get() if task_memory else ""
         mem_lines = memory_content.splitlines() if memory_content else []
         memory_content_lite = "\n".join(mem_lines[-15:])  
-        
         validation_prompt = (
             f"Task: {original_message}\n"
             f"Results:\n{memory_content_lite}\n\n"
@@ -758,11 +764,7 @@ Answer: [response]
             )
 
             response, norm_token_info = self._normalize_llm_result(llm_result)
-            if self.logger:
-                try:
-                    self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
-                except Exception:
-                    pass
+            self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
 
             # Clean up common JSON formatting issues
             response_clean = response.strip()
@@ -781,7 +783,6 @@ Answer: [response]
             
             # Determine completion based on which message is populated
             completed = bool(final_message and not continue_message)
-            
             return {
                 "completed": completed,
                 "final_message": final_message if final_message else "Task execution completed",
@@ -803,7 +804,7 @@ Answer: [response]
             except Exception:
                 pass
         except Exception as e:
-            console.error("LLM validation failed", str(e), task_id=task_id)
+            console.error("LLM validation failed", str(e), task_id=task_id, agent_id=self.agent_id)
             return {"completed": True, "final_message": "Task execution completed successfully"}
 
     async def llm_delegate(self, message: str, task_id: str) -> str:
@@ -852,14 +853,13 @@ Answer: [response]
         try:
             llm_result = await llm_completion_async(model=self.light_llm, prompt=prompt, temperature=0.0, max_tokens=6)
             response, norm_token_info = self._normalize_llm_result(llm_result)
-            if self.logger:
-                try:
-                    self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
-                except Exception:
-                    pass
+            try:
+                self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
+            except Exception:
+                pass
             raw = response.strip().splitlines()[0].strip() if response else ''
             try:
-                console.debug("Delegate raw response", raw, task_id=task_id)
+                console.debug("Delegate raw response", raw, task_id=task_id, agent_id=self.agent_id)
             except Exception:
                 pass
 
@@ -901,13 +901,13 @@ Answer: [response]
                     break
 
             if not target_agent:
-                console.debug("Delegation: target not found", choice, task_id=task_id)
+                console.debug("Delegation: target not found", choice, task_id=task_id, agent_id=self.agent_id)
                 return
 
             # If the chosen target is this same agent, ignore the delegation to avoid self-redirects
             try:
                 if getattr(target_agent, 'agent_id', None) == getattr(self, 'agent_id', None):
-                    console.debug("Delegation: chosen target is self; ignoring redirect", target_name, task_id=task_id)
+                    console.debug("Delegation: chosen target is self; ignoring redirect", target_name, task_id=task_id, agent_id=self.agent_id)
                     return
             except Exception:
                 pass
@@ -916,7 +916,7 @@ Answer: [response]
 
             self._redirects[task_id] = {'target_name': target_name}
 
-            console.task(f"Task {task_id} REDIRECTED [Agent: {self.agent_id}] -> {target_name}", task_id=task_id)
+            console.task(f"Task {task_id} REDIRECTED [Agent: {self.agent_id}] -> {target_name}", task_id=task_id, agent_id=self.agent_id)
 
             # Ensure target agent is running (best-effort)
             try:
@@ -935,9 +935,9 @@ Answer: [response]
                     # run may be a method to enqueue/start processing
                     target_agent.run(envelope)
                 else:
-                    console.debug("Delegation: target has no enqueue method", target_agent.agent_id, task_id=task_id)
+                    console.debug("Delegation: target has no enqueue method", target_agent.agent_id, task_id=task_id, agent_id=self.agent_id)
             except Exception as e:
-                console.error("Delegation forward failed", str(e), task_id=task_id)
+                console.error("Delegation forward failed", str(e), task_id=task_id, agent_id=self.agent_id)
 
         except Exception:
             pass

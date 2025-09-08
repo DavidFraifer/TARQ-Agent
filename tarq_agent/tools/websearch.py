@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 
-def _get_page_content(url, task_id=None):
+def _get_page_content(url, task_id=None, agent_id=None):
     """Extract clean content from a webpage."""
     start_time = time.perf_counter()
     try:
@@ -25,11 +25,11 @@ def _get_page_content(url, task_id=None):
         if body:
             text = body.get_text(separator=' ', strip=True)
             duration = time.perf_counter() - start_time
-            console.info("Web Scraping", f"Fetched and cleaned content from {url} in {duration:.2f}s", task_id=task_id)
+            console.info("Web Scraping", f"Fetched and cleaned content from {url} in {duration:.2f}s", task_id=task_id, agent_id=agent_id)
             return ' '.join(text.split())
         return None
     except Exception as e:
-        console.error("Web Scraping", f"Error fetching content from {url}: {str(e)}", task_id=task_id)
+        console.error("Web Scraping", f"Error fetching content from {url}: {str(e)}", task_id=task_id, agent_id=agent_id)
         return None
 
 
@@ -96,15 +96,15 @@ def _search_web(task_memory, user_input, task_id, fast_search):
     return search_results
 
 
-def _threaded_scrape_wrapper(url, task_id=None):
+def _threaded_scrape_wrapper(url, task_id=None, agent_id=None):
     """Wrapper around _get_page_content to add logging per thread."""
     thread_name = threading.current_thread().name
     start_time = time.perf_counter()
 
-    content = _get_page_content(url, task_id)
+    content = _get_page_content(url, task_id, agent_id)
 
     duration = time.perf_counter() - start_time
-    console.success("Thread Done", f"[{thread_name}] Finished {url} in {duration:.2f}s", task_id=task_id)
+    console.success("Thread Done", f"[{thread_name}] Finished {url} in {duration:.2f}s", task_id=task_id, agent_id=agent_id)
     return content
 
 
@@ -146,9 +146,9 @@ async def _search_and_summarize(task_memory: list, query: str, task_id: int = 1,
     return summary, token_info
 
 
-async def web_search(task_memory, text, task_id=1, fast_search=True, light_llm: str = "gemini-2.5-flash-lite"):
+async def web_search(task_memory, text, task_id=1, fast_search=True, light_llm: str = "gemini-2.5-flash-lite", agent_id: str = None):
     start_time = time.perf_counter()
-    console.tool("Web Search", "LLM Query inference - Extracting search query", task_id=task_id)
+    console.tool("Web Search", "LLM Query inference - Extracting search query", task_id=task_id, agent_id=agent_id)
 
     # Step 1: Extract user_input from text
     prompt = f"""
