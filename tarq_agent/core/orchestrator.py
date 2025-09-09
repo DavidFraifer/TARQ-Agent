@@ -14,13 +14,14 @@ import uuid
 import re
 
 class Orchestrator:
-    def __init__(self, light_llm: str, heavy_llm: str, logger: TARQLogger, agent_id: str = "unknown", disable_delegation: bool = False, rag_engine=None):
+    def __init__(self, light_llm: str, heavy_llm: str, logger: TARQLogger, agent_id: str = "unknown", disable_delegation: bool = False, rag_engine=None, validation_mode: bool = False):
         self.logger = logger
         self.light_llm = light_llm
         self.heavy_llm = heavy_llm
         self.rag_engine = rag_engine
         self.agent_id = agent_id
         self.disable_delegation = disable_delegation
+        self.validation_mode = validation_mode
         self.tools = ToolContainer()
         self.tool_descriptions = {}  # Store descriptions for custom tools
         self.message_queue = queue.Queue()
@@ -148,7 +149,9 @@ class Orchestrator:
             analysis_start = time.time()
             analysis = await self.llm_analyze_task(payload, task_memory, task_id)
             analysis_time = time.time() - analysis_start
-
+            
+            # Debug: Print the LLM analysis result
+            print("LLM Analysis Result:", analysis)
             # If a delegate redirected this task while analysis was running, stop here and suppress analysis output
             # Wait for delegate to finish if it is still running to ensure we honor its decision
             if delegate_task is not None and not delegate_task.done():
@@ -247,9 +250,9 @@ DSL:
 W N=wait N min | F TOOL=fetch (before IF/WHILE) | A TOOL=action | IF/ELSEIF/ELSE/ENDIF=conditions | WHILE/ENDWHILE=loops | STOP=complete
 
 Examples:
-"Look at 'Annual Report' in sheets and send an email"
+"Look for amazon revenue 2024 'Annual Report' and upload to sheets"
+A websearch
 A sheets
-A gmail
 
 
 "Watch gmail every hour for a report then upload it to sheets, in case the email is not a report notify me in slack"
@@ -486,7 +489,7 @@ Answer: [response]
                     tool = step[1]
                     console.info(f"Fetching data", f"Tool: {tool}", task_id=task_id, agent_id=self.agent_id)
                     context = original_message
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, heavy_llm=self.heavy_llm, agent_id=self.agent_id)
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, heavy_llm=self.heavy_llm, agent_id=self.agent_id, validation_mode=self.validation_mode)
                     last_fetch_result = result
                     
                     # Check if websearch tool has token info to add to task
@@ -505,7 +508,7 @@ Answer: [response]
                     tool = step[1]
                     console.info(f"Executing action", f"Tool: {tool}", task_id=task_id, agent_id=self.agent_id)
                     context = original_message
-                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, heavy_llm=self.heavy_llm, agent_id=self.agent_id)
+                    result = await self.tools.execute_tool(tool, context, task_id=task_id, task_memory=task_memory, light_llm=self.light_llm, heavy_llm=self.heavy_llm, agent_id=self.agent_id, validation_mode=self.validation_mode)
                     
                     # Check if websearch tool has token info to add to task
                     if tool == "websearch" and hasattr(self.tools.tools["websearch"], '_last_token_info'):

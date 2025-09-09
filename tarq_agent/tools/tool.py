@@ -31,7 +31,7 @@ class ToolContainer:
             raise ValueError("Tool name and callable function required")
         self.tools[name.strip()] = func
         
-    async def execute_tool(self, name: str, context: str = "", task_id: str = None, task_memory = None, light_llm: str = "gpt-4o-mini", heavy_llm: str = "gpt-4o", agent_id: str = None) -> str:
+    async def execute_tool(self, name: str, context: str = "", task_id: str = None, task_memory = None, light_llm: str = "gpt-4o-mini", heavy_llm: str = "gpt-4o", agent_id: str = None, validation_mode: bool = False) -> str:
         """Execute a tool with the given context"""
         if name not in self.tools:
             raise ValueError(f"Tool '{name}' not found")
@@ -42,27 +42,33 @@ class ToolContainer:
             if asyncio.iscoroutinefunction(tool_func):
                 try:
                     # Try with full parameters first
-                    result = await tool_func(context, task_id=task_id, task_memory=task_memory, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=agent_id)
+                    result = await tool_func(context, task_id=task_id, task_memory=task_memory, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=agent_id, validation_mode=validation_mode)
                 except TypeError:
                     try:
-                        result = await tool_func(context, task_id=task_id, task_memory=task_memory, agent_id=agent_id)
+                        result = await tool_func(context, task_id=task_id, task_memory=task_memory, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=agent_id)
                     except TypeError:
                         try:
-                            result = await tool_func(context, task_id=task_id)
+                            result = await tool_func(context, task_id=task_id, task_memory=task_memory, agent_id=agent_id)
                         except TypeError:
-                            result = await tool_func(context)
+                            try:
+                                result = await tool_func(context, task_id=task_id)
+                            except TypeError:
+                                result = await tool_func(context)
             else:
                 try:
                     # Try with full parameters first
-                    result = tool_func(context, task_id=task_id, task_memory=task_memory, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=agent_id)
+                    result = tool_func(context, task_id=task_id, task_memory=task_memory, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=agent_id, validation_mode=validation_mode)
                 except TypeError:
                     try:
-                        result = tool_func(context, task_id=task_id, task_memory=task_memory, agent_id=agent_id)
+                        result = tool_func(context, task_id=task_id, task_memory=task_memory, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=agent_id)
                     except TypeError:
                         try:
-                            result = tool_func(context, task_id=task_id)
+                            result = tool_func(context, task_id=task_id, task_memory=task_memory, agent_id=agent_id)
                         except TypeError:
-                            result = tool_func(context)
+                            try:
+                                result = tool_func(context, task_id=task_id)
+                            except TypeError:
+                                result = tool_func(context)
             
             return str(result) if result is not None else "Tool completed successfully"
             

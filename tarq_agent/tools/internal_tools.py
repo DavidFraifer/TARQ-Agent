@@ -5,7 +5,7 @@ from ..utils.console import console
 from .websearch import web_search
 
 
-def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None):
+def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None, validation_mode: bool = False):
     emails = ["support@google.com", "admin@google.com"]
     current_email = random.choice(emails)
     message = f"Email checked - Found message from: {current_email} with subject: 'Monthly Report Available'"
@@ -20,7 +20,7 @@ def gmail_tool(user_input: str = "", task_id: str = None, task_memory=None, ligh
         pass  # Fallback for console errors
 
 
-def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None):
+def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None, validation_mode: bool = False):
     message = f"Spreadsheet updated - Added new data row with timestamp {time.strftime('%Y-%m-%d %H:%M:%S')}"
     try:
         console.tool(f"[SHEETS] {message}", task_id=task_id, agent_id=agent_id)
@@ -33,7 +33,7 @@ def sheets_tool(user_input: str = "", task_id: str = None, task_memory=None, lig
             pass
 
 
-def drive_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None):
+def drive_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None, validation_mode: bool = False):
     message = f"File uploaded to Google Drive - Document saved to data folder"
     try:
         console.tool(f"[DRIVE] {message}", task_id=task_id, agent_id=agent_id)
@@ -46,7 +46,7 @@ def drive_tool(user_input: str = "", task_id: str = None, task_memory=None, ligh
             pass
 
 
-def jira_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None):
+def jira_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None, validation_mode: bool = False):
     ticket_id = f"TARQ-{random.randint(1000, 9999)}"
     message = f"Jira ticket created - {ticket_id}: Task tracking ticket generated"
     try:
@@ -60,7 +60,7 @@ def jira_tool(user_input: str = "", task_id: str = None, task_memory=None, light
             pass
 
 
-def calendar_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None):
+def calendar_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None, validation_mode: bool = False):
     event_time = time.strftime('%Y-%m-%d %H:%M:%S')
     message = f"Calendar event created - Meeting scheduled for {event_time}"
     try:
@@ -74,7 +74,7 @@ def calendar_tool(user_input: str = "", task_id: str = None, task_memory=None, l
             pass
 
 
-def slack_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None):
+def slack_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None, validation_mode: bool = False):
     message = f"Slack message sent - Notification delivered to #general channel"
     try:
         console.tool(f"[SLACK] {message}", task_id=task_id, agent_id=agent_id)
@@ -87,7 +87,7 @@ def slack_tool(user_input: str = "", task_id: str = None, task_memory=None, ligh
             pass
 
 
-async def websearch_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None):
+async def websearch_tool(user_input: str = "", task_id: str = None, task_memory=None, light_llm: str = None, heavy_llm: str = None, agent_id: str = None, validation_mode: bool = False):
     """
     Web search tool that performs intelligent web search with LLM-powered query extraction and summarization.
     
@@ -104,9 +104,11 @@ async def websearch_tool(user_input: str = "", task_id: str = None, task_memory=
         result, token_info = await web_search(
             task_memory=task_memory or [],
             text=user_input,
-            task_id=task_id or "websearch",
+            task_id=task_id,
             fast_search=True,  
-            light_llm=light_llm
+            light_llm=light_llm,
+            agent_id=agent_id,
+            validation_mode=validation_mode
         )
         
         # Store result in task memory if available
@@ -125,7 +127,7 @@ async def websearch_tool(user_input: str = "", task_id: str = None, task_memory=
     except Exception as e:
         error_msg = f"Web search failed: {str(e)}"
         try:
-            console.error("WEBSEARCH", error_msg, task_id=task_id)
+            console.error("WEBSEARCH", error_msg, task_id=task_id, agent_id=agent_id)
         except Exception:
             pass  # Fallback for console errors
         
