@@ -145,10 +145,14 @@ class ProfessionalConsole:
         """Print tool-related message"""
         self.print(LogLevel.TOOL, message, details, task_id, agent_id)
     
-    def task_summary(self, task_id: str, duration: float, tokens: dict, status: str, final_message: str = None, computational_time: float = None, agent_id: Optional[str] = None):
+    def task_summary(self, task_id: str, duration: float, tokens: dict, status: str, final_message: str = None, computational_time: float = None, agent_id: Optional[str] = None, task_status: str = "success"):
         """Print a formatted task summary"""
         status_color = Colors.GREEN if status == "completed" else Colors.YELLOW if status == "incomplete" else Colors.RED
         status_text = self._colorize(status.upper(), status_color + Colors.BOLD)
+        
+        # Format task status color
+        task_status_color = Colors.GREEN if task_status == "success" else Colors.YELLOW if task_status == "warning" else Colors.RED
+        task_status_text = self._colorize(task_status.upper(), task_status_color + Colors.BOLD)
         
         # Format token information
         total_tokens = tokens.get('tokens_used', 0)
@@ -175,13 +179,18 @@ class ProfessionalConsole:
         # Combine task status and final message in one line
         if final_message:
             if status == "completed":
-                self.success(f"Task {task_id} COMPLETED - {final_message}", task_id=task_id, agent_id=agent_id)
+                if task_status == "success":
+                    self.success(f"Task {task_id} COMPLETED [{task_status_text}] - {final_message}", task_id=task_id, agent_id=agent_id)
+                elif task_status == "warning":
+                    self.warning(f"Task {task_id} COMPLETED [{task_status_text}] - {final_message}", task_id=task_id, agent_id=agent_id)
+                else:  # error
+                    self.error(f"Task {task_id} COMPLETED [{task_status_text}] - {final_message}", task_id=task_id, agent_id=agent_id)
                 self.task(f"Task {task_id} COMPLETED - Closing task", task_id=task_id, agent_id=agent_id)
             else:
-                self.warning(f"Task {task_id} {status.upper()} - {final_message}", task_id=task_id, agent_id=agent_id)
+                self.warning(f"Task {task_id} {status.upper()} [{task_status_text}] - {final_message}", task_id=task_id, agent_id=agent_id)
                 self.task(f"Task {task_id} {status.upper()} - Closing task", task_id=task_id, agent_id=agent_id)
         else:
-            self.task(f"Task {task_id} {status_text}", task_id=task_id, agent_id=agent_id)
+            self.task(f"Task {task_id} {status_text} [{task_status_text}]", task_id=task_id, agent_id=agent_id)
         
         self.info(timing_info, f"{tokens_info} | {calls_info} | {cost_info}", task_id=task_id, agent_id=agent_id)
 
