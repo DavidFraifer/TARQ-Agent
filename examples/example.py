@@ -6,8 +6,8 @@ from tarq_agent import Agent
 
 agent = Agent(
     tools=['jira', 'gmail', 'sheets', 'drive', 'calendar', 'slack','websearch'],
-    light_llm="gemini-2.5-flash-lite",
-    heavy_llm="gemini-2.5-flash-lite"
+    light_llm="gemini-2.5-flash",
+    heavy_llm="gemini-2.5-flash"
     #context=["company_info.pdf"]
 )
 

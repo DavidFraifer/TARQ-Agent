@@ -4,7 +4,7 @@ from tarq_agent import Agent
 def main():
     # Create agent with basic tools
     agent = Agent(
-        tools=['gmail', 'sheets', 'slack', 'drive', 'websearch'],
+        tools=['gmail', 'sheets', 'slack', 'drive', 'websearch','jira'],
         light_llm="gemini-2.5-flash-lite",
         heavy_llm="gemini-2.5-flash-lite"
     )

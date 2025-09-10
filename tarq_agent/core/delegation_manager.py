@@ -1,4 +1,5 @@
 from ..utils.console import console
+from ..utils.llm_utils import normalize_llm_result
 from ..internal.llm import llm_completion_async
 import asyncio
 
@@ -11,24 +12,6 @@ class DelegationManager:
         self.light_llm = light_llm
         self.agent_id = agent_id
         self._redirects = {}
-
-    def _normalize_llm_result(self, llm_result):
-        """Normalize various possible return shapes from llm_completion_async."""
-        response, token_info = "", {}
-        
-        if isinstance(llm_result, tuple) and len(llm_result) >= 1:
-            response = llm_result[0] or ""
-            token_info = llm_result[1] if len(llm_result) > 1 and isinstance(llm_result[1], dict) else {}
-        else:
-            response = llm_result if llm_result is not None else ""
-        
-        token_info = token_info or {}
-        return response, {
-            'input_tokens': token_info.get('input_tokens', token_info.get('input', 0)),
-            'output_tokens': token_info.get('output_tokens', token_info.get('output', 0)),
-            'total_tokens': token_info.get('total_tokens', token_info.get('tokens', 0)),
-            'llm_calls': token_info.get('llm_calls', token_info.get('calls', 1))
-        }
 
     async def delegate_task(self, message: str, task_id: str, team) -> str:
         """Fast delegate LLM: returns a single agent name (exact) or 'NONE' if no delegation."""
@@ -72,7 +55,7 @@ Output: 2
         
         try:
             llm_result = await llm_completion_async(model=self.light_llm, prompt=prompt, temperature=0.0, max_tokens=6)
-            response, norm_token_info = self._normalize_llm_result(llm_result)
+            response, norm_token_info = normalize_llm_result(llm_result)
             try:
                 self.logger.add_tokens(task_id, norm_token_info, self.light_llm)
             except Exception:

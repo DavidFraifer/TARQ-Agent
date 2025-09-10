@@ -1,5 +1,6 @@
 ﻿from ..utils.logger import TARQLogger
 from ..utils.console import console
+from ..utils.llm_utils import normalize_llm_result
 from ..tools.tool import ToolContainer
 from ..tools.internal_tools import internal_tools
 from ..memory.AgentMemory import AgentMemory
@@ -7,10 +8,12 @@ from ..internal.llm import llm_completion_async
 from .dsl_parser import DSLParser
 from .dsl_executor import DSLExecutor
 from .delegation_manager import DelegationManager
-from typing import Dict, Any, List
-import asyncio, json, threading, queue, time, uuid, re
+import asyncio, threading, queue, time, uuid
 
 class Orchestrator:
+    # Constants
+    MAX_WAIT_TIMES_ENTRIES = 100  # Limit concurrent task tracking
+    
     def __init__(self, light_llm: str, heavy_llm: str, logger: TARQLogger, agent_id: str = "unknown", 
                  disable_delegation: bool = False, rag_engine=None, validation_mode: bool = False):
         # Core configuration
@@ -46,24 +49,6 @@ class Orchestrator:
         if description: 
             self.tool_descriptions[name] = description
 
-    def _normalize_llm_result(self, llm_result):
-        """Normalize various possible return shapes from llm_completion_async."""
-        response, token_info = "", {}
-        
-        if isinstance(llm_result, tuple) and len(llm_result) >= 1:
-            response = llm_result[0] or ""
-            token_info = llm_result[1] if len(llm_result) > 1 and isinstance(llm_result[1], dict) else {}
-        else:
-            response = llm_result if llm_result is not None else ""
-        
-        token_info = token_info or {}
-        return response, {
-            'input_tokens': token_info.get('input_tokens', token_info.get('input', 0)),
-            'output_tokens': token_info.get('output_tokens', token_info.get('output', 0)),
-            'total_tokens': token_info.get('total_tokens', token_info.get('tokens', 0)),
-            'llm_calls': token_info.get('llm_calls', token_info.get('calls', 1))
-        }
-
     def set_logger(self, logger):
         self.logger = logger
     
@@ -80,6 +65,17 @@ class Orchestrator:
     
     def receive_message(self, message):
         return self.message_queue.put(message) if self.running else False
+    
+    def _cleanup_wait_times_if_needed(self):
+        """Cleanup old wait_times entries if limit exceeded to prevent memory leak"""
+        if len(self.wait_times) > self.MAX_WAIT_TIMES_ENTRIES:
+            # Keep only the most recent MAX_WAIT_TIMES_ENTRIES // 2 entries
+            keep_count = self.MAX_WAIT_TIMES_ENTRIES // 2
+            # Sort by task creation time (extract timestamp from task-XXXXXXXX format)
+            sorted_tasks = sorted(self.wait_times.keys())
+            tasks_to_remove = sorted_tasks[:-keep_count] if len(sorted_tasks) > keep_count else []
+            for task_id in tasks_to_remove:
+                self.wait_times.pop(task_id, None)
     
     def _scheduler_worker(self):
         loop = asyncio.new_event_loop()
@@ -116,18 +112,14 @@ class Orchestrator:
         
         # Detect forwarded/delegated envelope messages and extract payload
         is_forwarded = False
-        origin_agent = None
-        origin_task = None
         payload = message
         
         if isinstance(message, dict) and message.get('_forwarded'):
             is_forwarded = True
-            origin_agent = message.get('origin_agent')
-            origin_task = message.get('origin_task_id')
             payload = message.get('payload', '')
 
         # Initialize wait time tracking and logging
-        self.wait_times = {task_id: 0.0}
+        self.wait_times[task_id] = 0.0
         display_message = payload[:60] + "..." if isinstance(payload, str) and len(payload) > 60 else payload
         console.task(f"Task {task_id} ADDED [Agent: {self.agent_id}] - {display_message}", task_id=task_id, agent_id=self.agent_id)
         self.logger.start_task(task_id, message, self.agent_id)
@@ -177,8 +169,28 @@ class Orchestrator:
                                 task_id=task_id, agent_id=self.agent_id)
                     flow = analysis.get("flow", [])
                     if flow:
+                        # Share wait_times reference safely (DSL executor only reads from it)
                         self.dsl_executor.wait_times = self.wait_times
                         result = await self.dsl_executor.execute_dsl_flow(flow, task_memory, task_id, payload)
+                        
+                        # Handle re-analysis if task needs continuation
+                        if result.get("needs_reanalysis", False) and result.get("continue_message"):
+                            console.info("Task needs continuation", "Re-analyzing with additional context", 
+                                       task_id=task_id, agent_id=self.agent_id)
+                            continue_message = result.get("continue_message", "")
+                            reanalysis = await self.llm_analyze_task(continue_message, task_memory, task_id)
+                            
+                            if "flow" in reanalysis and reanalysis["flow"]:
+                                console.debug("Continuation flow generated", "Executing additional steps", 
+                                            task_id=task_id, agent_id=self.agent_id)
+                                continuation_result = await self.dsl_executor.execute_dsl_flow(
+                                    reanalysis["flow"], task_memory, task_id, continue_message)
+                                # Merge results, keeping the original execution time
+                                result.update({
+                                    "completed": continuation_result.get("completed", result.get("completed")),
+                                    "status": continuation_result.get("status", result.get("status")),
+                                    "final_message": continuation_result.get("final_message", result.get("final_message"))
+                                })
                     else:
                         result = {"completed": True, "status": "success", "final_message": "Task completed successfully"}
             
@@ -205,12 +217,21 @@ class Orchestrator:
             console.task_summary(task_id, task_duration, token_info, status, final_message, 
                                computational_time, agent_id=self.agent_id, task_status=task_status)
             self.logger.complete_task(task_id, status, computational_time)
+            
+            # Cleanup completed task from wait_times to prevent memory leak
+            self.wait_times.pop(task_id, None)
+            self._cleanup_wait_times_if_needed()
+            
         except Exception as e:
             console.error("Task execution failed", str(e), task_id=task_id, agent_id=self.agent_id)
             task_memory.set(f"ERROR: {str(e)}")
             elapsed = time.time() - start_time
             comp_time = elapsed - self.wait_times.get(task_id, 0.0)
             self.logger.complete_task(task_id, "error", comp_time)
+            
+            # Cleanup failed task from wait_times to prevent memory leak
+            self.wait_times.pop(task_id, None)
+            self._cleanup_wait_times_if_needed()
     
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
         # Prepare task memory content
@@ -296,7 +317,7 @@ Answer: [response]
                 max_tokens=100, 
                 response_format=None
             )
-            response, norm_token_info = self._normalize_llm_result(llm_result)
+            response, norm_token_info = normalize_llm_result(llm_result)
             
             # Log tokens safely
             try: 
