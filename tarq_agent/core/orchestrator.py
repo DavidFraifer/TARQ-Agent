@@ -13,12 +13,21 @@ import asyncio, json, threading, queue, time, uuid, re
 class Orchestrator:
     def __init__(self, light_llm: str, heavy_llm: str, logger: TARQLogger, agent_id: str = "unknown", 
                  disable_delegation: bool = False, rag_engine=None, validation_mode: bool = False):
-        self.logger, self.light_llm, self.heavy_llm = logger, light_llm, heavy_llm
-        self.rag_engine, self.agent_id = rag_engine, agent_id
-        self.disable_delegation, self.validation_mode = disable_delegation, validation_mode
-        self.tools, self.tool_descriptions = ToolContainer(), {}
+        # Core configuration
+        self.logger = logger
+        self.light_llm = light_llm
+        self.heavy_llm = heavy_llm
+        self.rag_engine = rag_engine
+        self.agent_id = agent_id
+        self.disable_delegation = disable_delegation
+        self.validation_mode = validation_mode
+        
+        # Initialize components
+        self.tools = ToolContainer()
+        self.tool_descriptions = {}
         self.message_queue = queue.Queue()
-        self.scheduler_thread, self.running = None, False
+        self.scheduler_thread = None
+        self.running = False
         self.agent_memory = AgentMemory(f"Orchestrator-Agent-{agent_id}", max_tasks=50)
         self.wait_times = {}
         
@@ -31,13 +40,16 @@ class Orchestrator:
         # Add internal tools
         for tool_name, tool_func in internal_tools.items():
             self.tools.add_tool(tool_name, tool_func)
+
     def add_tool(self, name: str, func, description: str = None):
         self.tools.add_tool(name, func)
-        if description: self.tool_descriptions[name] = description
+        if description: 
+            self.tool_descriptions[name] = description
 
     def _normalize_llm_result(self, llm_result):
         """Normalize various possible return shapes from llm_completion_async."""
         response, token_info = "", {}
+        
         if isinstance(llm_result, tuple) and len(llm_result) >= 1:
             response = llm_result[0] or ""
             token_info = llm_result[1] if len(llm_result) > 1 and isinstance(llm_result[1], dict) else {}
@@ -51,7 +63,9 @@ class Orchestrator:
             'total_tokens': token_info.get('total_tokens', token_info.get('tokens', 0)),
             'llm_calls': token_info.get('llm_calls', token_info.get('calls', 1))
         }
-    def set_logger(self, logger): self.logger = logger
+
+    def set_logger(self, logger):
+        self.logger = logger
     
     def start(self):
         if not self.running:
@@ -61,7 +75,8 @@ class Orchestrator:
     
     def stop(self):
         self.running = False
-        if self.scheduler_thread: self.scheduler_thread.join()
+        if self.scheduler_thread: 
+            self.scheduler_thread.join()
     
     def receive_message(self, message):
         return self.message_queue.put(message) if self.running else False
@@ -80,14 +95,19 @@ class Orchestrator:
                     running_tasks.add(task)
                     running_tasks -= {t for t in running_tasks if t.done()}
                     self.message_queue.task_done()
-                except queue.Empty: await asyncio.sleep(0.1)
-                except Exception: await asyncio.sleep(0.1)
+                except queue.Empty: 
+                    await asyncio.sleep(0.1)
+                except Exception: 
+                    await asyncio.sleep(0.1)
         
         try:
             loop.run_until_complete(scheduler_loop())
-            if running_tasks: loop.run_until_complete(asyncio.gather(*running_tasks, return_exceptions=True))
-        except Exception: pass
-        finally: loop.close()
+            if running_tasks: 
+                loop.run_until_complete(asyncio.gather(*running_tasks, return_exceptions=True))
+        except Exception: 
+            pass
+        finally: 
+            loop.close()
     
     async def _process_message_async(self, message):
         start_time = time.time()
@@ -95,11 +115,19 @@ class Orchestrator:
         task_memory = self.agent_memory.create_task_memory(f"Task-{task_id}")
         
         # Detect forwarded/delegated envelope messages and extract payload
-        is_forwarded, origin_agent, origin_task, payload = False, None, None, message
+        is_forwarded = False
+        origin_agent = None
+        origin_task = None
+        payload = message
+        
         if isinstance(message, dict) and message.get('_forwarded'):
-            is_forwarded, origin_agent, origin_task, payload = True, message.get('origin_agent'), message.get('origin_task_id'), message.get('payload', '')
+            is_forwarded = True
+            origin_agent = message.get('origin_agent')
+            origin_task = message.get('origin_task_id')
+            payload = message.get('payload', '')
 
-        self.wait_times = {task_id: 0.0}  # Initialize wait time tracking
+        # Initialize wait time tracking and logging
+        self.wait_times = {task_id: 0.0}
         display_message = payload[:60] + "..." if isinstance(payload, str) and len(payload) > 60 else payload
         console.task(f"Task {task_id} ADDED [Agent: {self.agent_id}] - {display_message}", task_id=task_id, agent_id=self.agent_id)
         self.logger.start_task(task_id, message, self.agent_id)
@@ -107,34 +135,46 @@ class Orchestrator:
         # Start delegation worker in background if part of a team and not forwarded
         delegate_task = None
         try:
-            if hasattr(self, 'team') and getattr(self, 'team') and not is_forwarded and not self.disable_delegation:
-                delegate_task = asyncio.create_task(self.delegation_manager.execute_delegation(payload, task_id, self.team, self.agent_id))
-        except Exception: delegate_task = None
+            if (hasattr(self, 'team') and getattr(self, 'team') and 
+                not is_forwarded and not self.disable_delegation):
+                delegate_task = asyncio.create_task(
+                    self.delegation_manager.execute_delegation(payload, task_id, self.team, self.agent_id)
+                )
+        except Exception: 
+            delegate_task = None
 
         try:
+            # Step 1: Initial Analysis with timing
             analysis_start = time.time()
             analysis = await self.llm_analyze_task(payload, task_memory, task_id)
             analysis_time = time.time() - analysis_start
 
             # Wait for delegate to finish if still running
             if delegate_task and not delegate_task.done():
-                try: await delegate_task
-                except Exception: pass  # delegate failure is non-fatal
+                try: 
+                    await delegate_task
+                except Exception: 
+                    pass  # delegate failure is non-fatal
 
+            # Process analysis results
             if self.delegation_manager.is_task_redirected(task_id):
                 info = self.delegation_manager.get_redirect_info(task_id)
                 target = info.get('target_name', 'unknown')
-                console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", task_id=task_id, agent_id=self.agent_id)
+                console.debug("Task analysis suppressed due to redirect", f"Forwarded to {target}", 
+                            task_id=task_id, agent_id=self.agent_id)
                 result = {"completed": False, "status": "warning", "final_message": f"Task redirected to {target}"}
             else:
                 if "direct_answer" in analysis:
-                    console.debug("Direct answer provided", "Skipping DSL execution to save tokens", task_id=task_id, agent_id=self.agent_id)
+                    console.debug("Direct answer provided", "Skipping DSL execution to save tokens", 
+                                task_id=task_id, agent_id=self.agent_id)
                     result = {"completed": True, "status": "success", "final_message": analysis["direct_answer"]}
                 elif "error" in analysis:
-                    console.debug("DSL syntax validation failed", "Completing task with error", task_id=task_id, agent_id=self.agent_id)
+                    console.debug("DSL syntax validation failed", "Completing task with error", 
+                                task_id=task_id, agent_id=self.agent_id)
                     result = {"completed": True, "status": "error", "final_message": f"DSL Syntax Error: {analysis['error']}"}
                 else:
-                    console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", task_id=task_id, agent_id=self.agent_id)
+                    console.debug("Task analysis completed", f"Time: {analysis_time:.2f}s", 
+                                task_id=task_id, agent_id=self.agent_id)
                     flow = analysis.get("flow", [])
                     if flow:
                         self.dsl_executor.wait_times = self.wait_times
@@ -143,20 +183,27 @@ class Orchestrator:
                         result = {"completed": True, "status": "success", "final_message": "Task completed successfully"}
             
             # Calculate timing and get token info
-            task_duration, total_wait_time = time.time() - start_time, self.wait_times.get(task_id, 0.0)
+            task_duration = time.time() - start_time
+            total_wait_time = self.wait_times.get(task_id, 0.0)
             computational_time = task_duration - total_wait_time
+            
             task_data = self.logger.active_tasks.get(task_id, {})
             token_info = {
-                'tokens_used': task_data.get('tokens_used', 0), 'input_tokens': task_data.get('input_tokens', 0),
-                'output_tokens': task_data.get('output_tokens', 0), 'llm_calls': task_data.get('llm_calls', 0),
+                'tokens_used': task_data.get('tokens_used', 0), 
+                'input_tokens': task_data.get('input_tokens', 0),
+                'output_tokens': task_data.get('output_tokens', 0), 
+                'llm_calls': task_data.get('llm_calls', 0),
                 'total_cost': task_data.get('total_cost', 0.0)
             }
             
+            # Generate task summary
             status = "completed" if result.get("completed", True) else "incomplete"
             task_status = result.get("status", "success")
-            final_message = result.get('final_message', "Task execution finished" if status == "completed" else "Task incomplete")
+            final_message = result.get('final_message', 
+                                     "Task execution finished" if status == "completed" else "Task incomplete")
             
-            console.task_summary(task_id, task_duration, token_info, status, final_message, computational_time, agent_id=self.agent_id, task_status=task_status)
+            console.task_summary(task_id, task_duration, token_info, status, final_message, 
+                               computational_time, agent_id=self.agent_id, task_status=task_status)
             self.logger.complete_task(task_id, status, computational_time)
         except Exception as e:
             console.error("Task execution failed", str(e), task_id=task_id, agent_id=self.agent_id)
@@ -166,18 +213,27 @@ class Orchestrator:
             self.logger.complete_task(task_id, "error", comp_time)
     
     async def llm_analyze_task(self, message: str, task_memory, task_id: str):
+        # Prepare task memory content
         memory_content = task_memory.get() if task_memory else ""
 
         # Get RAG context if available
         rag_context = ""
         if self.rag_engine and self.rag_engine.is_enabled():
             rag_context = self.rag_engine.get_context(message, max_length=500)
-            if rag_context: rag_context = f"\nKnowledge Base:\n{rag_context}\n"
+            if rag_context: 
+                rag_context = f"\nKnowledge Base:\n{rag_context}\n"
 
+        # Build tools display
         available_tools = list(self.tools.tools.keys())
-        tools_info = [f"{tool_name}: {self.tool_descriptions[tool_name]}" if tool_name in self.tool_descriptions else tool_name for tool_name in available_tools]
+        tools_info = []
+        for tool_name in available_tools:
+            if tool_name in self.tool_descriptions:
+                tools_info.append(f"{tool_name}: {self.tool_descriptions[tool_name]}")
+            else:
+                tools_info.append(tool_name)
         tools_display = "[" + ", ".join(tools_info) + "]"
 
+        # Build analysis prompt
         analysis_prompt = f"""
 Task: "{message}"
 Context: {memory_content}{rag_context}
@@ -225,27 +281,44 @@ ENDWHILE
 Rules:
 - STOP only inside IF/ELSEIF if task says "stop immediately"
 - For "stop when BOTH X and Y": do actions separately, then check both before STOP
-- Final completion check must be in its own IF
-- Memory = action history â†’ use to verify
+- Memory = action history used to verify
 
 If user needs only a normal answer (no tool use):  
 Answer: [response]
 """
         
+        # Execute LLM analysis
         try:
-            llm_result = await llm_completion_async(model=self.heavy_llm, prompt=analysis_prompt, temperature=0.0, max_tokens=100, response_format=None)
+            llm_result = await llm_completion_async(
+                model=self.heavy_llm, 
+                prompt=analysis_prompt, 
+                temperature=0.0, 
+                max_tokens=100, 
+                response_format=None
+            )
             response, norm_token_info = self._normalize_llm_result(llm_result)
-            try: self.logger.add_tokens(task_id, norm_token_info, self.heavy_llm)
-            except Exception: pass
             
-            if response.strip().startswith("Answer:"): return {"direct_answer": response.strip()[7:].strip()}
+            # Log tokens safely
+            try: 
+                self.logger.add_tokens(task_id, norm_token_info, self.heavy_llm)
+            except Exception: 
+                pass
+            
+            # Handle direct answers
+            if response.strip().startswith("Answer:"): 
+                return {"direct_answer": response.strip()[7:].strip()}
 
-            try: flow = self.dsl_parser.parse_text_dsl(response)
+            # Parse DSL response
+            try: 
+                flow = self.dsl_parser.parse_text_dsl(response)
             except ValueError as e:
                 console.error(f"DSL Syntax Error", str(e), task_id=task_id, agent_id=self.agent_id)
                 return {"error": str(e)}
             
+            # Display parsed flow structure
             console.debug("Parsed DSL Flow Structure", "", task_id=task_id, agent_id=self.agent_id)
             self.dsl_parser.print_flow_structure(flow)
             return {"flow": flow}
-        except Exception: return {"flow": []}
+            
+        except Exception: 
+            return {"flow": []}
