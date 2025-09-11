@@ -1,6 +1,7 @@
 ﻿from ..utils.logger import TARQLogger
 from ..utils.console import console
 from ..utils.llm_utils import normalize_llm_result
+from ..utils import report_error, raise_error
 from ..tools.tool import ToolContainer
 from ..tools.internal_tools import internal_tools
 from ..memory.AgentMemory import AgentMemory
@@ -223,7 +224,7 @@ class Orchestrator:
             self._cleanup_wait_times_if_needed()
             
         except Exception as e:
-            console.error("Task execution failed", str(e), task_id=task_id, agent_id=self.agent_id)
+            report_error("SYS-001", context={"task_id": task_id, "error": str(e), "error_type": type(e).__name__})
             task_memory.set(f"ERROR: {str(e)}")
             elapsed = time.time() - start_time
             comp_time = elapsed - self.wait_times.get(task_id, 0.0)
@@ -333,7 +334,7 @@ Answer: [response]
             try: 
                 flow = self.dsl_parser.parse_text_dsl(response)
             except ValueError as e:
-                console.error(f"DSL Syntax Error", str(e), task_id=task_id, agent_id=self.agent_id)
+                report_error("DSL-001", context={"task_id": task_id, "dsl_content": response[:200], "error": str(e)})
                 return {"error": str(e)}
             
             # Display parsed flow structure

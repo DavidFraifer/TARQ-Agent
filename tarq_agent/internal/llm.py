@@ -1,6 +1,7 @@
 from openai import AsyncOpenAI
 from google import genai
 from google.genai import types
+from ..utils import report_error, raise_error
 import asyncio
 
 def _get_api_key(model: str) -> str:
@@ -10,7 +11,7 @@ def _get_api_key(model: str) -> str:
     elif model.startswith("gemini"):
         return get_cached_api_key('gemini')
     else:
-        raise ValueError(f"Unsupported model: {model}")
+        raise_error("LLM-001", context={"model": model, "supported_models": ["gpt-*", "gemini*"]})
 
 
 async def llm_completion_async(
@@ -85,7 +86,7 @@ async def llm_completion_async(
         return await asyncio.to_thread(_gemini_sync, model, prompt, system_message, temperature, max_tokens, response_format, api_key)
     
     else:
-        raise ValueError(f"Unsupported model: {model}")
+        raise_error("LLM-001", context={"model": model, "supported_models": ["gpt-*", "gemini*"], "function": "llm_completion_async"})
 
 
 def _gemini_sync(model: str, prompt: str, system_message: str, temperature: float, max_tokens: int, response_format: str, api_key: str) -> tuple[str, dict]:

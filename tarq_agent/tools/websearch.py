@@ -1,4 +1,5 @@
 from ..utils.console import console
+from ..utils import report_error, raise_error
 import requests
 from bs4 import BeautifulSoup
 from ..internal.llm import llm_completion_async
@@ -29,7 +30,7 @@ def _get_page_content(url, task_id=None, agent_id=None):
             return ' '.join(text.split())
         return None
     except Exception as e:
-        console.error("Web Scraping", f"Error fetching content from {url}: {str(e)}", task_id=task_id, agent_id=agent_id)
+        report_error("WEBSEARCH-001", context={"url": url, "error": str(e), "task_id": task_id})
         return None
 
 
@@ -42,7 +43,7 @@ def _search_web(task_memory, user_input, task_id, fast_search, agent_id=None):
     try:
         brave_key = get_cached_api_key('brave')
     except ValueError as e:
-        console.error("Web Search", f"BRAVE API key not found: {str(e)}", task_id=task_id, agent_id=agent_id)
+        report_error("WEBSEARCH-004", context={"service": "BRAVE API", "error": str(e), "task_id": task_id})
         return []
 
     console.info("Web Scraping", f"Getting Results for: {user_input}", task_id=task_id, agent_id=agent_id)
@@ -60,7 +61,7 @@ def _search_web(task_memory, user_input, task_id, fast_search, agent_id=None):
             }
         ).json()
     except Exception as e:
-        console.error("Web Search", f"API request failed: {str(e)}", task_id=task_id, agent_id=agent_id)
+        report_error("WEBSEARCH-002", context={"api": "Brave Search", "error": str(e), "task_id": task_id})
         return []
 
     search_results = []
@@ -82,7 +83,7 @@ def _search_web(task_memory, user_input, task_id, fast_search, agent_id=None):
                     content = future.result()
                 except Exception as e:
                     content = None
-                    console.error("Web Scraping", f"Error processing {r['url']}: {str(e)}", task_id=task_id, agent_id=agent_id)
+                    report_error("WEBSEARCH-001", context={"url": r['url'], "error": str(e), "task_id": task_id})
 
                 search_results.append({
                     'title': r['title'],
@@ -117,7 +118,7 @@ async def _search_and_summarize(task_memory: list, query: str, task_id: int = 1,
     results = _search_web(task_memory=task_memory, user_input=query, task_id=task_id, fast_search=fast_search, agent_id=agent_id)
     
     if not results:
-        console.error("Web Search", "No results found or API error", task_id=task_id, agent_id=agent_id)
+        report_error("WEBSEARCH-003", context={"query": query, "task_id": task_id})
         return "No results found", {"tokens_used": 0, "input_tokens": 0, "output_tokens": 0, "llm_calls": 0, "total_cost": 0.0}
     
     console.success("Web Search", "Data extracted correctly", task_id=task_id, agent_id=agent_id)

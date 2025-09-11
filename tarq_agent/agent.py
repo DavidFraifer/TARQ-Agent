@@ -4,9 +4,8 @@ from .core.orchestrator import Orchestrator
 from .config import configure_api_keys
 from .utils.logger import TARQLogger
 from .utils.console import console
+from .utils import report_error, raise_error
 import uuid
-import time
-import os
 from datetime import datetime
 
 class Agent:
@@ -20,7 +19,8 @@ class Agent:
         
         for model, name in [(light_llm, "light_llm"), (heavy_llm, "heavy_llm")]:
             if model not in self.SUPPORTED_MODELS:
-                raise ValueError(f"Unsupported {name}: {model}. Supported: {self.SUPPORTED_MODELS}")
+                raise_error("AGT-002", 
+                           context={"model": model, "model_type": name, "supported": self.SUPPORTED_MODELS})
         
         self.tools = tools
         self.light_llm = light_llm
@@ -42,10 +42,10 @@ class Agent:
                     for doc_path in context:
                         self.rag.ingest_file(doc_path)
                 else:
-                    console.warning("RAG", "RAG engine failed to initialize, continuing without context", agent_id=self.agent_id)
+                    report_error("CFG-001", context={"message": "RAG engine failed to initialize"})
                     self.rag = None
             except ImportError as e:
-                console.warning("RAG", f"Failed to import RAG engine: {e}", agent_id=self.agent_id)
+                report_error("CFG-001", context={"error": str(e), "module": "RAG engine"})
                 self.rag = None
         
         self.orchestrator = Orchestrator(logger=self.logger, light_llm=light_llm, heavy_llm=heavy_llm, agent_id=self.agent_id, disable_delegation=disable_delegation, rag_engine=self.rag, validation_mode=validation_mode)
@@ -57,7 +57,7 @@ class Agent:
     def _configure_tools(self):
         """Configure which tools are available to the orchestrator"""
         if not self.tools:
-            raise ValueError("Tools list cannot be empty. Please provide at least one tool.")
+            raise_error("AGT-003", context={"tools_provided": self.tools})
         
         self.orchestrator.tools.tools.clear()
         from .tools.internal_tools import internal_tools
@@ -74,7 +74,7 @@ class Agent:
                 tool_name = getattr(tool, '__name__', str(tool))
                 self.orchestrator.add_tool(tool_name, tool)
             else:
-                console.warning(f"Tool '{tool}' is not supported. Use Tool() wrapper, built-in tool name, or raw function", agent_id=self.agent_id)
+                report_error("TL-001", context={"tool": str(tool), "tool_type": type(tool).__name__})
     
     def add_tool(self, name: str, func):
         """Add a tool to the agent"""
@@ -104,9 +104,9 @@ class Agent:
             else:
                 # Task not found or logging not enabled
                 if not self.logger:
-                    console.warning("Task stop failed", "Logging not enabled - cannot track specific tasks", agent_id=self.agent_id)
+                    report_error("AGT-004", context={"task_id": task_id, "reason": "logging disabled"})
                 else:
-                    console.warning("Task stop failed", f"Task {task_id} not found in active tasks", agent_id=self.agent_id)
+                    report_error("AGT-004", context={"task_id": task_id, "reason": "task not found", "active_tasks": list(self.logger.active_tasks.keys())})
         else:
             # Stop entire agent
             if self.running:
@@ -124,12 +124,12 @@ class Agent:
                 self.running = False
                 console.system("Agent stopped", f"ID: {self.agent_id} - All tasks terminated", agent_id=self.agent_id)
             else:
-                console.warning("Agent stop", f"Agent {self.agent_id} is not currently running", agent_id=self.agent_id)
+                report_error("AGT-005", context={"agent_id": self.agent_id, "current_state": "not running"})
     
     def run(self, message: str):
         """Run a task with the agent"""
         if not self.running:
-            raise RuntimeError(f"Agent {self.agent_id} must be started before running tasks. Call agent.start() first.")
+            raise_error("AGT-001", context={"agent_id": self.agent_id, "operation": "run task"})
         
         self.last_called = datetime.now()
         self.orchestrator.receive_message(message)
